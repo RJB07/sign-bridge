@@ -9,7 +9,6 @@ function App() {
   const [handsDetected, setHandsDetected] = useState(0);
   const [faceDetected, setFaceDetected] = useState(false);
   const [translationLog, setTranslationLog] = useState<string[]>([]);
-  const [mirrorVideo, setMirrorVideo] = useState(true);
 
   const handResultsRef = useRef<Results | null>(null);
   const faceResultsRef = useRef<any>(null);
@@ -133,6 +132,13 @@ function App() {
     ctx.fillStyle = pointColor;
     ctx.strokeStyle = lineColor;
     const tipIndices = [4, 8, 12, 16, 20];
+    const fingerLabels: Record<number, string> = {
+      4: 'T1',
+      8: 'I2',
+      12: 'M3',
+      16: 'R4',
+      20: 'P5',
+    };
 
     landmarks.forEach((landmark, index) => {
       const x = landmark.x * width;
@@ -152,6 +158,14 @@ function App() {
         ctx.strokeStyle = 'rgba(59,130,246,0.25)';
         ctx.stroke();
         ctx.strokeStyle = lineColor;
+
+        const labelText = fingerLabels[index];
+        if (labelText) {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '13px Inter, system-ui, sans-serif';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(labelText, x + 10, y - 8);
+        }
       }
     });
 
@@ -297,14 +311,7 @@ function App() {
 
         handsData.forEach((landmarks, handIndex) => {
           const rawLabel = ((handedness[handIndex] as any)?.label as string) || `Hand ${handIndex + 1}`;
-          const visibleLabel = mirrorVideo
-            ? rawLabel === 'Left'
-              ? 'Right'
-              : rawLabel === 'Right'
-              ? 'Left'
-              : rawLabel
-            : rawLabel;
-          const handLabel = visibleLabel === 'Left' ? 'L' : visibleLabel === 'Right' ? 'R' : visibleLabel;
+          const handLabel = rawLabel === 'Left' ? 'R' : rawLabel === 'Right' ? 'L' : rawLabel;
 
           const smoothedHand = smoothLandmarks(landmarkSmoothing.current[handLabel], landmarks);
           landmarkSmoothing.current[handLabel] = smoothedHand;
@@ -380,21 +387,27 @@ function App() {
       hands.close();
       faceMesh?.close?.();
     };
-  }, [hands, faceMesh, mirrorVideo]);
+  }, [hands, faceMesh]);
 
   return (
     <div className="app-shell">
+      <section className="hero">
+        <p className="eyebrow">Real-time sign language bridge</p>
+        <h1>Translate hand gestures into text with live AI tracking</h1>
+        <p className="hero-copy">
+          Your camera becomes a sign interpreter with face and hand landmark overlay, powered by MediaPipe.
+        </p>
+        <div className="hero-actions">
+          <button className="btn-primary">Start translation</button>
+          <button className="btn-secondary">How it works</button>
+        </div>
+      </section>
+
       <div className="layout">
         <div className="video-box">
           <div className="video-header">
-            <span>Live sign translation</span>
-            <button
-              type="button"
-              className="mirror-toggle"
-              onClick={() => setMirrorVideo((value) => !value)}
-            >
-              {mirrorVideo ? 'Normal view' : 'Mirror view'}
-            </button>
+            <span>Camera capture</span>
+            <span className="status-pill">Live</span>
           </div>
           <div className="video-frame">
             <video
@@ -403,12 +416,10 @@ function App() {
               autoPlay
               playsInline
               muted
-              style={{ transform: mirrorVideo ? 'scaleX(-1)' : 'none' }}
             />
             <canvas
               ref={canvasRef}
               className="video"
-              style={{ transform: mirrorVideo ? 'scaleX(-1)' : 'none' }}
             />
           </div>
           <div className="video-footer">{message}</div>
@@ -416,16 +427,16 @@ function App() {
 
         <div className="chat-box">
           <div className="chat-header">
-            <div>Translation chat</div>
+            <div>Translation dashboard</div>
           </div>
 
           <div className="chat-status">
             <div>
-              <span>Predicted:</span>
+              <span>Predicted</span>
               <strong>{predictedSign}</strong>
             </div>
             <div>
-              <span>Hands:</span>
+              <span>Hands</span>
               <strong>{handsDetected}</strong>
             </div>
           </div>
