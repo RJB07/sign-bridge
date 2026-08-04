@@ -1,0 +1,155 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #ffffff;
+  color: #111111;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body,
+html,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background: #ffffff;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 24px;
+  background: #ffffff;
+}
+
+.layout {
+  display: flex;
+  gap: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+  flex-wrap: wrap;
+}
+
+.video-box,
+.chat-box {
+  background: #f9fbff;
+  border: 1px solid #e6ecf2;
+  border-radius: 24px;
+  box-shadow: 0 20px 40px rgba(16, 24, 40, 0.08);
+}
+
+.video-box {
+  flex: 1 1 640px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.video-header,
+.chat-header {
+  padding: 22px 24px;
+  border-bottom: 1px solid #e6ecf2;
+  font-size: 1rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.video-frame {
+  position: relative;
+  min-height: 440px;
+  background: #000000;
+}
+
+.video-frame .video,
+.video-frame canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.video-frame .video,
+.video-frame canvas {
+  transform: none;
+}
+
+.video-footer {
+  padding: 18px 24px;
+  color: #475569;
+  font-size: 0.95rem;
+  border-top: 1px solid #e6ecf2;
+}
+
+.chat-box {
+  flex: 1 1 320px;
+  display: flex;
+  flex-direction: column;
+  min-height: 440px;
+}
+
+.chat-status {
+  padding: 18px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #0f172a;
+  border-bottom: 1px solid #e6ecf2;
+}
+
+.chat-status strong {
+  font-size: 1rem;
+  color: #1d4ed8;
+}
+
+.chat-list {
+  padding: 20px 24px 24px;
+  display: grid;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.chat-item {
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  color: #111827;
+  font-weight: 600;
+}
+
+.empty {
+  color: #64748b;
+  text-align: center;
+  padding: 26px 18px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 18px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.toggle input {
+  width: 18px;
+  height: 18px;
+}
+
+@media (max-width: 960px) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .video-box,
+  .chat-box {
+    flex: 1 1 auto;
+  }
+}
