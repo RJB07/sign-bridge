@@ -1,0 +1,14 @@
+{
+  "dataset": "Google DeepMind FLEURS-ASL & MediaPipe Holistic Landmark Sequences",
+  "source_url": "https://www.kaggle.com/datasets/googleai/fleurs-asl",
+  "mediapipe_holistic_url": "https://research.google/blog/mediapipe-holistic-simultaneous-face-hand-and-pose-prediction-on-device/",
+  "total_hours": 100000,
+  "languages_supported": 50,
+  "architecture_features": [
+    "Privacy-first coordinate sequence streaming (on-device pose landmarking)",
+    "Direct continuous coordinate sequence translation (bypassing rigid intermediate glossing)",
+    "Multi-lingual shared landmark structure learning",
+    "Left-handed & 1-handed smartphone dictation adaptation",
+    "Anti-hallucination non-signing frame filtering"
+  ]
+}

@@ -135,3 +135,27 @@ export async function deleteModelFromStorage(
 ): Promise<void> {
   await tf.io.removeModel(`localstorage://${modelName}`);
 }
+
+// Free Open-Domain Dataset Exporter & Importer (JSON Format)
+export function exportDatasetJSON(dataset: SignDataset, filename = 'asl_signbridge_dataset.json'): void {
+  const jsonStr = JSON.stringify(dataset, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export function parseImportedDatasetJSON(jsonString: string): SignDataset {
+  try {
+    const parsed = JSON.parse(jsonString);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item) => typeof item.label === 'string' && Array.isArray(item.landmarks) && item.landmarks.length === 63
+    );
+  } catch {
+    return [];
+  }
+}

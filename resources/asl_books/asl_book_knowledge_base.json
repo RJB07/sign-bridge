@@ -1,0 +1,108 @@
+{
+  "books": [
+    {
+      "id": "asl_classroom_book",
+      "title": "ASL Picture Book for Better Communication in the Classroom",
+      "authors": ["Asja Zara Lagumdžija", "Delara Nakaš", "Mustafa Čelić"],
+      "chapters": [
+        "Basics & Alphabet",
+        "Signing Questions & Basic Grammar",
+        "Everyday & Daily Interaction",
+        "Time & Clock",
+        "Pronouns & Directionals",
+        "In The Classroom",
+        "Verbs",
+        "Adjectives",
+        "Quantity & Nouns"
+      ]
+    },
+    {
+      "id": "juicy_english_asl",
+      "title": "Juicy English ASL Starter Signs & Practice Cards",
+      "authors": ["JuicyEnglish.com"],
+      "chapters": [
+        "ASL Alphabet & Numbers",
+        "Starter Signs 1 & 2",
+        "ASL Pronouns",
+        "Daily Conversation Phrases",
+        "Expanded Core 40 ASL Board"
+      ]
+    },
+    {
+      "id": "acr_gcd_standards",
+      "title": "Create a World of Deaf Readers: Standards for Sign Language Storybooks",
+      "authors": ["Chris Kurz", "Truc Nguyen", "RIT/NTID", "ACR GCD"],
+      "chapters": [
+        "5 Sign Parameters (Handshape, Location, Movement, Palm Orientation, Non-Manual Markers)",
+        "Interactive Storytelling & Chaining / Sandwiching",
+        "Viewing & Reading Grade Leveling Guidelines",
+        "Video Production & Studio Standards"
+      ]
+    },
+    {
+      "id": "asl_the_easy_way",
+      "title": "American Sign Language The Easy Way",
+      "authors": ["David A. Stewart, Ed.D."],
+      "chapters": [
+        "Facial Grammar & Nonmanual Signals",
+        "10 Core Rules of ASL Grammar",
+        "Directional & Reciprocal Verbs",
+        "Classifiers (cl-1, cl-2, cl-3, cl-V, cl-bent V, cl-B, cl-F, cl-55, etc.)",
+        "Time Line & Temporal Aspect",
+        "Vocabulary Categories (Courtesy, Courses, Health, Sports, Travel)"
+      ]
+    }
+  ],
+  "asl_grammar_rules": [
+    {
+      "ruleNumber": 1,
+      "name": "Topic / Comment",
+      "description": "In a simple sentence, the topic is described first, followed by the comment. Facial signal: raised eyebrows + forward head tilt on topic."
+    },
+    {
+      "ruleNumber": 2,
+      "name": "Tense with Time Adverbs",
+      "description": "Time adverbs (YESTERDAY, TODAY, TOMORROW, NOW) are placed at or near the beginning of a sentence to establish tense."
+    },
+    {
+      "ruleNumber": 3,
+      "name": "Simple Yes/No Questions",
+      "description": "Short yes/no questions have variable sign order accompanied by raised eyebrows and head tilted forward."
+    },
+    {
+      "ruleNumber": 4,
+      "name": "Long Yes/No Questions",
+      "description": "Longer yes/no questions use a Topic / Question format, placing the question sign at or near the end of the sentence."
+    },
+    {
+      "ruleNumber": 5,
+      "name": "Information-Seeking Questions (Wh-Questions)",
+      "description": "Wh-questions (WHO, WHAT, WHEN, WHERE, WHY, WHICH, HOW) place the wh-sign at or near the end, accompanied by squeezed/furrowed eyebrows and head tilted forward."
+    },
+    {
+      "ruleNumber": 6,
+      "name": "Pronominalization & Spatial Indexing",
+      "description": "Pronouns are indicated by pointing to a present referent or an established location point in 3D signing space."
+    },
+    {
+      "ruleNumber": 7,
+      "name": "Rhetorical Questions",
+      "description": "The signer asks a question and immediately answers it (e.g. ME EXCITED WHY? NEXT-WEEK JAPAN me-FLY-to-there), using raised eyebrows."
+    },
+    {
+      "ruleNumber": 8,
+      "name": "Ordering of Simple Sentences",
+      "description": "Simple sentences follow Subject-Verb-Object (SVO) or Subject-Object-Verb (SOV) order."
+    },
+    {
+      "ruleNumber": 9,
+      "name": "Conditional Sentences",
+      "description": "In a conditional sentence, the condition is stated first (using SUPPOSE or IF with raised eyebrows and head tilt), followed by the outcome."
+    },
+    {
+      "ruleNumber": 10,
+      "name": "Negation",
+      "description": "Negative thoughts are created by placing a negative sign (NOT, NEVER, NONE, CAN'T, DON'T-WANT) before the verb or at the end of the topic, accompanied by a negative headshake."
+    }
+  ]
+}

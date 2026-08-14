@@ -1,0 +1,18 @@
+{
+  "project": "SignBridge",
+  "version": "0.1.0",
+  "lead": "rjb07",
+  "organization": "Ultima Core AI Labs",
+  "description": "Open-Source AI Sign Language Translation & SL2T Live Interpreter Engine",
+  "license": "MIT with Required Lead Attribution",
+  "signature_hash": "sha256-rjb07-ultima-core-ai-labs-signbridge-lead-signature-2026",
+  "created_at": "2026-08-14",
+  "contributors": [
+    {
+      "name": "rjb07",
+      "role": "Lead Architect & Creator",
+      "organization": "Ultima Core AI Labs",
+      "date": "2026-08-14"
+    }
+  ]
+}

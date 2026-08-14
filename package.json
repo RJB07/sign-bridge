@@ -4,10 +4,13 @@
   "version": "0.1.0",
   "description": "Open-source sign language recognition starter app using free browser models.",
   "scripts": {
+    "predev": "node scripts/verify_signature.js",
+    "prebuild": "node scripts/verify_signature.js",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
+
   "dependencies": {
     "@mediapipe/camera_utils": "^0.3.1675465971",
     "@mediapipe/drawing_utils": "^0.3.1675466124",

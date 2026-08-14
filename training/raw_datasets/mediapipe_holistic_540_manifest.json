@@ -1,0 +1,20 @@
+{
+  "tracker": "MediaPipe Holistic On-Device Predictor",
+  "total_landmarks": 540,
+  "breakdown": {
+    "hands_left": 21,
+    "hands_right": 21,
+    "face_mesh": 468,
+    "pose_body_skeleton": 33
+  },
+  "privacy_mode": "COORDINATE_STREAMING_ONLY",
+  "handedness_support": [
+    "AUTO",
+    "LEFT",
+    "RIGHT"
+  ],
+  "dictation_modes": [
+    "DUAL_HAND",
+    "ONE_HANDED_MOBILE"
+  ]
+}

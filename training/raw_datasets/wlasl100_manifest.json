@@ -1,0 +1,11 @@
+{
+  "dataset_name": "WLASL100 Video Classification Dataset",
+  "kaggle_url": "https://www.kaggle.com/datasets/nadimsrabon6/wlasl100-video-classification-dataset",
+  "num_classes": 100,
+  "features": [
+    "Handshape",
+    "Trajectory",
+    "Spatial Location"
+  ],
+  "status": "READY_FOR_MODEL_TRAINING"
+}
