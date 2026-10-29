@@ -43,3 +43,11 @@ jobs:
         run: npm run test:e2e
         env:
           CHROME_PATH: /usr/bin/google-chrome
+
+      - name: GitHub Pages build
+        run: |
+          npm run build
+          grep -q '/sign-bridge/assets/' dist/index.html
+          grep -q '/sign-bridge/models/' dist/sw.js
+        env:
+          GITHUB_PAGES: 'true'

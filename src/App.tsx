@@ -3,9 +3,19 @@ import { ASL_ENGLISH_PACK } from './languages/aslEnglish';
 import { LiveInterpreter, type LiveSnapshot } from './recognition/liveInterpreter';
 import { assessFrame } from './recognition/frameQuality';
 import { letterModelFromJson, predictLetter } from './recognition/letterModel';
-import { decodeF32, glossToEnglish, modelFromJson, predictSequence, type SequenceModel } from './recognition/sequenceModel';
+import { decodeF32, glossToEnglish, modelFromJson, predictSequence, type Prediction, type SequenceModel } from './recognition/sequenceModel';
 import { exportDatasetJSON, parseImportedDatasetJSON, type SignDataset } from './dataset';
 import { loadSavedDataset, saveDataset } from './storage';
+import {
+  applyPersonalLabel,
+  loadPersonalSamples,
+  matchPersonal,
+  persistPersonalSamples,
+  sampleFromSequence,
+  type PersonalSample,
+} from './personalize/personalSigns';
+import { publicUrl } from './publicUrl';
+import { glossesToEnglish } from './textAssembly/glossEnglish';
 import { SignTextAssembler } from './textAssembly/SignTextAssembler';
 import { MediaPipeTracker } from './tracking/MediaPipeTracker';
 import { HearingChannel } from './reverseChannel/HearingChannel';
@@ -13,15 +23,28 @@ import type { ConversationMessage, FrameLandmarksData, TrackingStatus } from './
 
 type DemoClip = { label: string; features: string };
 
-function classifierFor(model: SequenceModel) {
-    return {
-      labels: model.labels,
-      emitThreshold: model.emitThreshold,
-      marginThreshold: model.marginThreshold,
-      classThresholds: model.classThresholds,
-      predict: (sequence: number[][]) => predictSequence(model, sequence),
-      predictPreview: (sequence: number[][]) => predictSequence(model, sequence, { members: 1, tta: false }),
-    };
+function classifierFor(
+  model: SequenceModel,
+  personal: () => PersonalSample[],
+  rememberSequence: (sequence: number[][]) => void,
+  onPersonal: (active: boolean) => void,
+) {
+  const withPersonal = (sequence: number[][], prediction: Prediction) => {
+    const hit = matchPersonal(personal(), sequence);
+    onPersonal(Boolean(hit));
+    return applyPersonalLabel(prediction, sequence, personal());
+  };
+  return {
+    labels: model.labels,
+    emitThreshold: model.emitThreshold,
+    marginThreshold: model.marginThreshold,
+    classThresholds: model.classThresholds,
+    predict: (sequence: number[][]) => {
+      rememberSequence(sequence);
+      return withPersonal(sequence, predictSequence(model, sequence));
+    },
+    predictPreview: (sequence: number[][]) => withPersonal(sequence, predictSequence(model, sequence, { members: 1, tta: false })),
+  };
 }
 
 function App() {
@@ -60,7 +83,7 @@ function App() {
     {
       id: 'welcome',
       sender: 'SIGNER',
-      text: 'Sign an isolated ASL gloss. SignBridge shows the English word on this device.',
+      text: 'Sign a gloss. SignBridge keeps the gloss and writes a short English sentence on this device.',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
@@ -89,6 +112,13 @@ function App() {
   const [typedReplyText, setTypedReplyText] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [dataset, setDataset] = useState<SignDataset>(() => loadSavedDataset());
+  const [personalSamples, setPersonalSamples] = useState<PersonalSample[]>(() => loadPersonalSamples());
+  const [personalLabel, setPersonalLabel] = useState('');
+  const [personalMessage, setPersonalMessage] = useState('Sign or replay a sample, then save it here.');
+  const [personalHit, setPersonalHit] = useState(false);
+  const personalRef = useRef<PersonalSample[]>([]);
+  const lastSequenceRef = useRef<number[][] | null>(null);
+  personalRef.current = personalSamples;
 
   const speechRef = useRef(speechEnabled);
   speechRef.current = speechEnabled;
@@ -129,9 +159,9 @@ function App() {
     const load = async () => {
       try {
         const [modelResponse, demoResponse, letterResponse] = await Promise.all([
-          fetch(ASL_ENGLISH_PACK.modelUrl),
-          fetch('/models/demo-clips.json'),
-          fetch('/models/asl-fingerspelling.json'),
+          fetch(publicUrl(ASL_ENGLISH_PACK.modelUrl)),
+          fetch(publicUrl('/models/demo-clips.json')),
+          fetch(publicUrl('/models/asl-fingerspelling.json')),
         ]);
         if (!modelResponse.ok) throw new Error(`model HTTP ${modelResponse.status}`);
         const payload = await modelResponse.json();
@@ -142,7 +172,9 @@ function App() {
           const letters = letterModelFromJson(await letterResponse.json());
           letterPredictRef.current = (hand) => predictLetter(letters, hand);
         }
-        interpreterRef.current = new LiveInterpreter(classifierFor(model), {
+        interpreterRef.current = new LiveInterpreter(classifierFor(model, () => personalRef.current, (sequence) => {
+          lastSequenceRef.current = sequence;
+        }, setPersonalHit), {
           letterPredict: (hand) => letterPredictRef.current?.(hand) ?? null,
         });
         setModelLabels(model.labels.map(glossToEnglish));
@@ -270,6 +302,27 @@ function App() {
     assemblerRef.current?.pushSign(result.label, result.confidence);
   };
 
+  const previewTokens = spelling.length > 0 ? [...words, spelling.join('')] : words;
+  const englishPreview = glossesToEnglish(previewTokens);
+  const saveLastSign = () => {
+    const sequence = lastSequenceRef.current;
+    const label = personalLabel.trim() || (predictedSign !== 'Show a sign' && predictedSign !== 'Loading model…' ? predictedSign.trim() : '');
+    if (!sequence || sequence.length === 0 || !label) {
+      setPersonalMessage('Sign or replay a sample, and give it a label.');
+      return;
+    }
+    const next = [...personalSamples, sampleFromSequence(label, sequence)].slice(-40);
+    personalRef.current = next;
+    setPersonalSamples(next);
+    persistPersonalSamples(next);
+    setPersonalMessage(`Saved “${label}” in this browser. It is not uploaded.`);
+  };
+  const removePersonal = (id: string) => {
+    const next = personalSamples.filter((sample) => sample.id !== id);
+    personalRef.current = next;
+    setPersonalSamples(next);
+    persistPersonalSamples(next);
+  };
   const filtered = modelLabels.filter((label) => label.toLowerCase().includes(searchQuery.toLowerCase()));
   const latestHearing = [...conversation].reverse().find((message) => message.sender === 'HEARING');
   const hearingNow = interimHearingText || latestHearing?.text || '';
@@ -315,10 +368,15 @@ function App() {
       </header>
 
       <section id="live-caption" className={`caption-stage ${justAdded ? 'is-committed' : ''}`} aria-live="polite">
-        <p className="caption-kicker">Your words</p>
+        <p className="caption-kicker">English</p>
+        <p id="english-line" className="english-line">
+          {englishPreview.english || 'Signs become an English sentence here.'}
+        </p>
+        {englishPreview.note && <p className="english-note">{englishPreview.note}</p>}
+        <p className="caption-kicker">Glosses</p>
         <div className="caption-line">
           {words.length === 0 && spelling.length === 0 ? (
-            <span className="caption-placeholder">Signs show up here as English.</span>
+            <span className="caption-placeholder caption-placeholder-small">Recognized glosses stay here. Tap one to remove it.</span>
           ) : (
             words.map((word, index) => (
               <button key={`${word}-${index}`} type="button" className="caption-word" onClick={() => assemblerRef.current?.removeAt(index)} aria-label={`Remove ${word}`}>
@@ -341,6 +399,7 @@ function App() {
           <span className={`status-chip ${handCount > 0 ? 'is-live' : ''}`}>{handStatus}</span>
           <span className="status-chip">{phase === 'fingerspelling' ? 'Fingerspelling' : phase === 'signing' ? 'Signing' : 'Waiting'}</span>
           <span className="status-chip">{forcedHand === 'AUTO' ? 'Either hand' : `${forcedHand} hand`}</span>
+          {personalHit && <span className="status-chip is-live">Your sign</span>}
           <div className="meter" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(matchConfidence)} aria-label="Confidence">
             <div style={{ width: `${Math.max(0, Math.min(100, matchConfidence))}%` }} />
             <span>{matchConfidence > 0 ? `${matchConfidence.toFixed(0)}%` : '—'}</span>
@@ -425,9 +484,62 @@ function App() {
                 <time>{msg.timestamp}</time>
               </header>
               <p>{msg.text}</p>
+              {msg.glosses && <p className="chat-glosses">Glosses: {msg.glosses}</p>}
             </article>
           ))}
         </div>
+      </section>
+
+      <section className="personal-box" aria-label="Your signs">
+        <h2>Your signs</h2>
+        <p>These stay in this browser. Video is not stored or uploaded. A close match can replace the shared guess for you.</p>
+        <form
+          className="personal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveLastSign();
+          }}
+        >
+          <label htmlFor="personal-label">Label</label>
+          <input
+            id="personal-label"
+            className="dict-search-input"
+            list="known-glosses"
+            placeholder="hello"
+            value={personalLabel}
+            onChange={(event) => setPersonalLabel(event.target.value)}
+          />
+          <button id="save-personal" className="primary" type="submit">Save last sign</button>
+          <button
+            id="clear-personal"
+            type="button"
+            onClick={() => {
+              personalRef.current = [];
+              setPersonalSamples([]);
+              persistPersonalSamples([]);
+              setPersonalMessage('Cleared the signs saved in this browser.');
+            }}
+            disabled={personalSamples.length === 0}
+          >
+            Clear
+          </button>
+        </form>
+        <datalist id="known-glosses">
+          {modelLabels.map((label) => (
+            <option key={label} value={label} />
+          ))}
+        </datalist>
+        <p id="personal-message">{personalMessage}</p>
+        <ul className="personal-list">
+          {personalSamples.map((sample) => (
+            <li key={sample.id}>
+              <span>{sample.label}</span>
+              <button type="button" onClick={() => removePersonal(sample.id)} aria-label={`Remove saved ${sample.label}`}>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <details className="dict-box">

@@ -50,7 +50,7 @@ describe('sign text assembler', () => {
     assembler.pushSign('where', 0.9);
     time = 5000;
     assembler.checkPauseBoundary();
-    expect(sentences[0]).toBe('Apple where?');
+    expect(sentences[0]).toBe('Where is the apple?');
   });
 
   it('undoes the last word, and a letter before a finished word', () => {

@@ -4,9 +4,10 @@ import {
   type HolisticLandmarkerResult,
   type NormalizedLandmark,
 } from '@mediapipe/tasks-vision';
+import { publicUrl } from '../publicUrl';
 import type { FrameLandmarksData, Point3D, TrackingStatus } from '../types/signbridge';
 
-const HOLISTIC_MODEL = '/models/holistic_landmarker.task';
+const HOLISTIC_MODEL = publicUrl('/models/holistic_landmarker.task');
 
 const HAND_CONNECTIONS: Array<[number, number]> = [
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -49,7 +50,7 @@ export class MediaPipeTracker {
     this.canvas.width = 640;
     this.canvas.height = 480;
     try {
-      const fileset = await FilesetResolver.forVisionTasks('/vendor/mediapipe');
+      const fileset = await FilesetResolver.forVisionTasks(publicUrl('/vendor/mediapipe'));
       this.landmarker = await HolisticLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: HOLISTIC_MODEL },
         runningMode: 'IMAGE',

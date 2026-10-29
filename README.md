@@ -2,7 +2,9 @@
 
 SignBridge turns one American Sign Language gloss at a time into English text. The camera and the recognizer stay on the device. Nothing is uploaded. Only ASL is implemented. A later sign language would plug in at `src/languages/aslEnglish.ts`.
 
-This is isolated-gloss recognition. A correct result is an English word such as “hello” or “thank you”, not a translated sentence and not full ASL grammar.
+The recognizer still reads one gloss at a time. On-device rules then turn the glosses you commit into a short English sentence, and the glosses stay visible under it. That is word order and a few fixed phrases, not full ASL grammar.
+
+The public demo is [https://rjb07.github.io/sign-bridge/](https://rjb07.github.io/sign-bridge/). It appears after a push to `main` once GitHub Pages is set to deploy from GitHub Actions. `CONTRIBUTING.md` has that one-time setting.
 
 ![Replay of held-out signs, undo, and a typed reply](docs/demo.gif)
 
@@ -17,9 +19,10 @@ npm run dev
 Open the URL Vite prints.
 
 1. Allow the camera, or press **Replay a sample**. That runs a real held-out PopSign clip through the same classifier. The first samples are hello, thank you, and please.
-2. The English word appears in the large caption. **Undo** removes the last word (Backspace does the same when you are not typing). Tap a word to remove that one.
-3. A hearing person types in **Their words**. Speech-to-text is optional. The reply is shown as text. **Speaking aloud** stays off until you turn it on for them.
-4. Caption size, and light, dark, and high-contrast themes, are in the top bar. On a phone the caption stays above the camera.
+2. The large line is an English sentence such as “Hello.” The glosses stay underneath. **Undo** removes the last gloss (Backspace does the same when you are not typing). Tap a gloss to remove it. **Send line** puts the sentence in the conversation and leaves the glosses on that message.
+3. **Your signs** saves the last sign under a label you choose. It stays in this browser, video is not stored, and a close match can replace the shared guess.
+4. A hearing person types in **Their words**. Speech-to-text is optional. The reply is shown as text. **Speaking aloud** stays off until you turn it on for them.
+5. Caption size, and light, dark, and high-contrast themes, are in the top bar. On a phone the caption stays above the camera.
 
 Install: in Chrome, Edge, or Safari, use **Install SignBridge** or **Add to Home Screen**. The first visit has to be online so the app can store the recognizer and the MediaPipe tracker. After that, captions, replay, and the camera work offline. The page uses system fonts, so text does not wait on Google.
 
@@ -32,7 +35,7 @@ npm run test:e2e       # replay, undo, typed reply, contrast theme, offline relo
 
 ## Using it
 
-The live caption is the largest text on the screen. Sound is off until you turn on “Speaking aloud” for a hearing person. The guess shown while the hand is still moving uses one ensemble member and no mirror, so a low-end phone can keep up. The word that is actually added uses the full model. A meter and a short “Added …” line mark the commit. If the hand is missing, too close, or out of frame, the caption says so.
+The English sentence is the largest text on the screen. The gloss chips under it are what the recognizer committed. Sound is off until you turn on “Speaking aloud” for a hearing person. The guess shown while the hand is still moving uses one ensemble member and no mirror, so a low-end phone can keep up. The word that is actually added uses the full model, then your saved signs if one is very close. A meter and a short “Added …” line mark the commit. If the hand is missing, too close, or out of frame, the caption says so.
 
 ## What you should expect
 
@@ -103,7 +106,9 @@ The shipped vocabulary is already the full 250 PopSign glosses. A larger downloa
 
 - `src/tracking/MediaPipeTracker.ts` — camera and Holistic landmarks
 - `src/recognition/` — features, sequence model, live segmenter, fingerspelling
-- `src/textAssembly/SignTextAssembler.ts` — phrase buffer and English punctuation
+- `src/textAssembly/SignTextAssembler.ts` — phrase buffer
+- `src/textAssembly/glossEnglish.ts` — gloss sequence to a short English sentence
+- `src/personalize/personalSigns.ts` — signs saved in the browser
 - `src/languages/aslEnglish.ts` — the only language pack
 - `training/` — download, landmark extraction, training
 - `docs/AUDIT.md` — architecture notes, including why there is no database

@@ -87,6 +87,11 @@ try {
   await page.waitForSelector('.caption-word');
   const word = await page.$eval('.caption-word', (node) => node.textContent?.trim() ?? '');
   assert(word.length > 0, 'Replay did not add an English word');
+  const english = await page.$eval('#english-line', (node) => node.textContent?.trim() ?? '');
+  assert(english === 'Hello.', `Expected an English sentence "Hello.", saw "${english}"`);
+  await page.type('#personal-label', 'hello');
+  await page.click('#save-personal');
+  await page.waitForFunction(() => document.querySelector('#personal-message')?.textContent?.includes('Saved'));
   const flash = await page.$eval('.commit-flash', (node) => node.textContent ?? '');
   assert(flash.includes(word), `Commit flash did not name ${word}`);
 

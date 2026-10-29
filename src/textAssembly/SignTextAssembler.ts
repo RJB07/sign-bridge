@@ -1,4 +1,5 @@
 import type { ConversationMessage } from '../types/signbridge';
+import { glossesToEnglish } from './glossEnglish';
 
 export class SignTextAssembler {
   private currentWordBuffer: string[] = [];
@@ -69,41 +70,21 @@ export class SignTextAssembler {
       this.onPhraseUpdate(this.getCurrentPhraseText());
     }
 
-    // Complete sentence flush with ASL Grammar Rule Translation & SL2T direct formatting
-    if (elapsed > this.sentencePauseMs && this.fullPhraseBuffer.length > 0) {
-      const { translatedText, ruleName } = this.applyASLGrammarRules(this.fullPhraseBuffer);
-      
-      const msg: ConversationMessage = {
-        id: Math.random().toString(36).substring(2, 9),
-        sender: 'SIGNER',
-        text: translatedText,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        grammarRuleApplied: ruleName,
-      };
-
-      this.onSentenceComplete(msg);
-      this.clearBuffer();
+    if (elapsed > this.sentencePauseMs && (this.fullPhraseBuffer.length > 0 || this.currentWordBuffer.length > 0)) {
+      this.commitLine();
     }
   }
 
-  /**
-   * Light English formatting only. Isolated glosses are not a full ASL grammar translation.
-   */
-  private applyASLGrammarRules(tokens: string[]): { translatedText: string; ruleName: string } {
-    if (tokens.length === 0) return { translatedText: '', ruleName: 'None' };
-
-    const raw = tokens.join(' ');
-    const whWords = ['who', 'what', 'when', 'where', 'why', 'which', 'how'];
-    const isWhQuestion = whWords.includes(tokens[tokens.length - 1]?.toLowerCase());
-    let result = raw.charAt(0).toUpperCase() + raw.slice(1);
-    let ruleName = 'English formatting';
-    if (isWhQuestion) {
-      ruleName = 'Question mark';
-      if (!result.endsWith('?')) result = `${result}?`;
-    } else if (!/[.!?]$/.test(result)) {
-      result += '.';
-    }
-    return { translatedText: result, ruleName };
+  private lineMessage(): ConversationMessage {
+    const line = glossesToEnglish(this.fullPhraseBuffer);
+    return {
+      id: Math.random().toString(36).substring(2, 9),
+      sender: 'SIGNER',
+      text: line.english,
+      glosses: line.glosses,
+      grammarRuleApplied: line.note,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    };
   }
 
   public getWords(): string[] {
@@ -139,14 +120,7 @@ export class SignTextAssembler {
       this.currentWordBuffer = [];
     }
     if (this.fullPhraseBuffer.length === 0) return;
-    const { translatedText, ruleName } = this.applyASLGrammarRules(this.fullPhraseBuffer);
-    this.onSentenceComplete({
-      id: Math.random().toString(36).substring(2, 9),
-      sender: 'SIGNER',
-      text: translatedText,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      grammarRuleApplied: ruleName,
-    });
+    this.onSentenceComplete(this.lineMessage());
     this.clearBuffer();
   }
 

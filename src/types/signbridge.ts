@@ -48,5 +48,7 @@ export type ConversationMessage = {
   text: string;
   timestamp: string;
   confidence?: number;
+  /** Gloss line that produced text. The English sentence is text. */
+  glosses?: string;
   grammarRuleApplied?: string;
 };
