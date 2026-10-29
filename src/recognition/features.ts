@@ -120,6 +120,10 @@ export function sequenceFeatures(frames: FeatureFrame[], forced?: HandSide | nul
   return rows;
 }
 
+export function mirrorSequence(sequence: number[][]): number[][] {
+  return sequence.map((row) => row.map((value, index) => (index % 3 === 0 ? -value : value)));
+}
+
 export function resampleSequence(seq: number[][], length = SEQ_LEN): number[][] {
   if (seq.length === 0) return [];
   if (seq.length === length) return seq.map((row) => row.slice());

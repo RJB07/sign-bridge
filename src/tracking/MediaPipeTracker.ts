@@ -58,9 +58,9 @@ export class MediaPipeTracker {
         runningMode: 'IMAGE',
         outputFaceBlendshapes: false,
         outputPoseSegmentationMasks: false,
-        minHandLandmarksConfidence: 0.4,
-        minPoseDetectionConfidence: 0.4,
-        minFaceDetectionConfidence: 0.4,
+        minHandLandmarksConfidence: 0.35,
+        minPoseDetectionConfidence: 0.35,
+        minFaceDetectionConfidence: 0.35,
       });
       this.stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: 640, height: 480 },

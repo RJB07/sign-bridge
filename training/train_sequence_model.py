@@ -95,9 +95,10 @@ def per_class(logits: np.ndarray, target: np.ndarray, labels: list[str]) -> list
 def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int):
     torch.manual_seed(seed)
     np.random.seed(seed)
-    model = SignTransformer(FEATURE_DIM, n_classes, dropout=0.1).to(device)
-    loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=0.05)
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    model = SignTransformer(FEATURE_DIM, n_classes, d_model=128, heads=4, layers=3, ff=256, dropout=0.2).to(device)
+    loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=0.1)
+    opt = torch.optim.AdamW(model.parameters(), lr=8e-4, weight_decay=1e-3)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
     train_loader = DataLoader(
         SequenceDataset(train_rows, label_to_index, cache / "seq", True, seed),
         batch_size=batch_size,
@@ -124,7 +125,8 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
             running += float(loss.item()) * x.size(0)
             correct += int((logits.argmax(1) == y).sum().item())
             total += x.size(0)
-        val_logits, val_y = evaluate(model, val_loader, device)
+        scheduler.step()
+        val_logits, val_y = evaluate(model, val_loader, device, tta=True)
         val_top1 = ranked_accuracy(val_logits, val_y, 1)
         val_top5 = ranked_accuracy(val_logits, val_y, 5)
         row = {
@@ -143,29 +145,69 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
             stale = 0
         else:
             stale += 1
-            if stale >= 5:
+            if stale >= 8:
                 break
     model.load_state_dict(best_state)
     model.eval()
     return model, history
 
 
-def evaluate(model, loader, device) -> tuple[np.ndarray, np.ndarray]:
+def mirror_batch(batch: torch.Tensor) -> torch.Tensor:
+    flipped = batch.clone()
+    flipped[..., 0::3] *= -1
+    return flipped
+
+
+def evaluate(model, loader, device, tta: bool = False) -> tuple[np.ndarray, np.ndarray]:
     model.eval()
     logits_all = []
     target_all = []
     with torch.no_grad():
         for x, y in loader:
-            logits_all.append(model(x.to(device)).cpu().numpy())
+            x = x.to(device)
+            logits = model(x)
+            if tta:
+                logits = 0.5 * (logits + model(mirror_batch(x)))
+            logits_all.append(logits.cpu().numpy())
             target_all.append(y.numpy())
     return np.concatenate(logits_all), np.concatenate(target_all)
 
 
-def ensemble_logits(models, loader, device):
-    packs = [evaluate(model, loader, device) for model in models]
+def ensemble_logits(models, loader, device, tta: bool = True):
+    packs = [evaluate(model, loader, device, tta=tta) for model in models]
     target = packs[0][1]
     logits = np.mean([pack[0] for pack in packs], axis=0)
     return logits, target
+
+
+def per_class_thresholds(logits: np.ndarray, target: np.ndarray, fallback: float, min_precision: float = 0.72) -> list[float]:
+    """Lowest confidence that keeps precision of that class at or above min_precision."""
+    shifted = logits - logits.max(axis=1, keepdims=True)
+    probs = np.exp(shifted)
+    probs /= probs.sum(axis=1, keepdims=True)
+    pred = probs.argmax(axis=1)
+    conf = probs.max(axis=1)
+    thresholds = []
+    for cls in range(logits.shape[1]):
+        chosen = np.where(pred == cls)[0]
+        if len(chosen) < 6:
+            thresholds.append(round(float(fallback), 3))
+            continue
+        order = chosen[np.argsort(-conf[chosen])]
+        correct = 0
+        best = float(conf[order[0]])
+        held = False
+        for seen, row in enumerate(order, start=1):
+            correct += int(target[row] == cls)
+            if correct / seen >= min_precision:
+                best = float(conf[row])
+                held = True
+            else:
+                break
+        if not held:
+            best = max(best, 0.9)
+        thresholds.append(round(best, 3))
+    return thresholds
 
 
 def choose_threshold(logits: np.ndarray, target: np.ndarray) -> dict:
@@ -212,7 +254,7 @@ def choose_threshold(logits: np.ndarray, target: np.ndarray) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache", default="training/cache")
-    parser.add_argument("--epochs", type=int, default=28)
+    parser.add_argument("--epochs", type=int, default=36)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--hidden", type=int, default=128)
     args = parser.parse_args()
@@ -246,26 +288,29 @@ def main() -> None:
     )
     members = []
     history = []
-    for seed in (0, 1):
+    for seed in (0, 1, 2):
         model, member_history = train_member(
             seed, len(labels), class_weights, splits["train"], label_to_index, cache, val_loader, device, args.epochs, args.batch_size
         )
         members.append(model)
         history.extend(member_history)
 
-    val_logits, val_y = ensemble_logits(members, val_loader, device)
-    test_logits, test_y = ensemble_logits(members, test_loader, device)
+    val_logits, val_y = ensemble_logits(members, val_loader, device, tta=True)
+    test_logits, test_y = ensemble_logits(members, test_loader, device, tta=True)
     threshold = choose_threshold(val_logits, val_y)
-    # Score the chosen gate on the untouched test signers as well.
+    class_thresholds = per_class_thresholds(val_logits, val_y, threshold["threshold"])
     probs = torch.softmax(torch.from_numpy(test_logits), dim=1).numpy()
     order = np.argsort(-probs, axis=1)
-    conf = probs[np.arange(len(probs)), order[:, 0]]
+    pred = order[:, 0]
+    conf = probs[np.arange(len(probs)), pred]
     margin = conf - probs[np.arange(len(probs)), order[:, 1]]
-    take = (conf >= threshold["threshold"]) & (margin >= threshold["margin"])
+    class_floor = np.array([class_thresholds[int(label)] for label in pred])
+    take = (conf >= class_floor) & (margin >= threshold["margin"])
     test_at_emit = {
         "threshold": threshold["threshold"],
         "margin": threshold["margin"],
-        "precision": round(float((order[:, 0][take] == test_y[take]).mean()), 4) if take.any() else 0.0,
+        "perClass": True,
+        "precision": round(float((pred[take] == test_y[take]).mean()), 4) if take.any() else 0.0,
         "coverage": round(float(take.mean()), 4),
     }
     test_per_class = per_class(test_logits, test_y, labels)
@@ -306,6 +351,11 @@ def main() -> None:
         "emit": {key: value for key, value in threshold.items() if key != "candidates"},
         "emitCandidates": threshold.get("candidates", []),
         "testAtEmit": test_at_emit,
+        "classThresholdSummary": {
+            "min": round(float(min(class_thresholds)), 3),
+            "median": round(float(np.median(class_thresholds)), 3),
+            "max": round(float(max(class_thresholds)), 3),
+        },
         "focusGlosses": focus_rows,
         "numpyMaxAbsDiff": max_diff,
         "history": history,
@@ -339,6 +389,8 @@ def main() -> None:
         "labels": labels,
         "emitThreshold": threshold["threshold"],
         "marginThreshold": threshold["margin"],
+        "classThresholds": class_thresholds,
+        "tta": True,
         "dataset": {
             "name": "PopSign ASL v1.0",
             "subset": "game images via sign/popsign-images",

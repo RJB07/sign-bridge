@@ -16,6 +16,10 @@ Open the URL Vite prints and allow the camera. The overlay is mirrored. **Replay
 
 `npm run build` typechecks and writes a static site. `SIGNATURE.json` must keep the lead attribution or the prebuild check fails.
 
+## Using it
+
+The live caption is the largest text on the screen. Sound is off until you turn on “Speaking aloud” for a hearing person. Tap a word to remove it, or press Undo (Backspace when you are not typing). Their reply, typed or from speech-to-text, is shown as text. Caption size and light, dark, and high-contrast themes are in the top bar. On a phone the caption stays above the camera.
+
 ## What you should expect
 
 The shipped recognizer is an ensemble of two small landmark transformers. It sees both hands, arm pose, and frame-to-frame motion. On PopSign’s official signer split (31 train / 8 validation / 8 test, no shared signer):
@@ -52,6 +56,10 @@ Not used for the model, and why:
 - **ASL Citizen** — non-commercial research license; the data and modifications may not be redistributed.
 - **FLEURS-ASL** — sentence translation, CC BY-SA, wrong task for a small isolated-gloss model.
 - **Google Isolated Sign Language Recognition (Kaggle)** — same PopSign signs, already landmarks, CC BY 4.0, about 56 GB and a Kaggle account. Use it if you want the full 250 glosses.
+
+## More data, when a Kaggle token exists
+
+`docs/KAGGLE_DATASETS.md` lists the two downloads that are worth plugging in later: the full Google ASL Signs landmark release (same 250 glosses, native frame rate, many more examples per sign) and the Google ASL Fingerspelling release (signer ids and the motion of J and Z). ASL Citizen and WLASL are not on that list.
 
 ## Retrain
 

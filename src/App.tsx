@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ASL_ENGLISH_PACK } from './languages/aslEnglish';
 import { LiveInterpreter, type LiveSnapshot } from './recognition/liveInterpreter';
+import { assessFrame } from './recognition/frameQuality';
 import { letterModelFromJson, predictLetter } from './recognition/letterModel';
 import { decodeF32, glossToEnglish, modelFromJson, predictSequence, type SequenceModel } from './recognition/sequenceModel';
 import { exportDatasetJSON, parseImportedDatasetJSON, type SignDataset } from './signModel';
@@ -13,12 +14,13 @@ import type { ConversationMessage, FrameLandmarksData, TrackingStatus } from './
 type DemoClip = { label: string; features: string };
 
 function classifierFor(model: SequenceModel) {
-  return {
-    labels: model.labels,
-    emitThreshold: model.emitThreshold,
-    marginThreshold: model.marginThreshold,
-    predict: (sequence: number[][]) => predictSequence(model, sequence),
-  };
+    return {
+      labels: model.labels,
+      emitThreshold: model.emitThreshold,
+      marginThreshold: model.marginThreshold,
+      classThresholds: model.classThresholds,
+      predict: (sequence: number[][]) => predictSequence(model, sequence),
+    };
 }
 
 function App() {
@@ -48,6 +50,7 @@ function App() {
   const [predictedSign, setPredictedSign] = useState('Loading model…');
   const [matchConfidence, setMatchConfidence] = useState(0);
   const [topGuesses, setTopGuesses] = useState<string>('');
+  const [frameHint, setFrameHint] = useState('Sign one word, then pause. Keep the whole hand in frame.');
   const [phase, setPhase] = useState<LiveSnapshot['phase']>('idle');
   const [currentPhrase, setCurrentPhrase] = useState<string[]>([]);
   const [modelLabels, setModelLabels] = useState<string[]>([]);
@@ -60,7 +63,26 @@ function App() {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
-  const [speechEnabled, setSpeechEnabled] = useState(true);
+  const [speechEnabled, setSpeechEnabled] = useState(() => {
+    try {
+      return localStorage.getItem('signbridge-speech') === 'on';
+    } catch {
+      return false;
+    }
+  });
+  const [theme, setTheme] = useState<'light' | 'dark' | 'contrast'>(() => {
+    const saved = localStorage.getItem('signbridge-theme');
+    if (saved === 'light' || saved === 'dark' || saved === 'contrast') return saved;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+  const [textSize, setTextSize] = useState<'sm' | 'md' | 'lg' | 'xl'>(() => {
+    const saved = localStorage.getItem('signbridge-text');
+    if (saved === 'sm' || saved === 'md' || saved === 'lg' || saved === 'xl') return saved;
+    return 'lg';
+  });
+  const [words, setWords] = useState<string[]>([]);
+  const [spelling, setSpelling] = useState<string[]>([]);
+  const [justAdded, setJustAdded] = useState('');
   const [isMicListening, setIsMicListening] = useState(false);
   const [interimHearingText, setInterimHearingText] = useState('');
   const [typedReplyText, setTypedReplyText] = useState('');
@@ -80,7 +102,13 @@ function App() {
 
   useEffect(() => {
     assemblerRef.current = new SignTextAssembler(
-      (phrase) => setCurrentPhrase(phrase),
+      () => {
+        const assembler = assemblerRef.current;
+        if (!assembler) return;
+        setWords(assembler.getWords());
+        setSpelling(assembler.getSpelling());
+        setCurrentPhrase(assembler.getCurrentPhraseText());
+      },
       (message) => {
         setConversation((prev) => [...prev, message]);
         speak(message.text);
@@ -153,6 +181,7 @@ function App() {
         setPredictedSign(snap.committed.text);
         setMatchConfidence(snap.committed.confidence * 100);
         assemblerRef.current?.pushSign(snap.committed.text, snap.committed.confidence);
+        setJustAdded(snap.committed.text);
       } else if (snap.candidate) {
         setPredictedSign(snap.candidate);
         setMatchConfidence(snap.confidence * 100);
@@ -165,6 +194,11 @@ function App() {
     };
     const onFrame = (data: FrameLandmarksData) => {
       setFps(data.fps);
+      setFrameHint(assessFrame({
+        leftHand: data.leftHand,
+        rightHand: data.rightHand,
+        poseDetected: Boolean(data.pose),
+      }).message);
       const interpreter = interpreterRef.current;
       if (!interpreter) return;
       const snap = interpreter.push({
@@ -190,8 +224,29 @@ function App() {
   }, [forcedHand]);
 
   useEffect(() => {
-    chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [conversation, interimHearingText]);
+    if (!justAdded) return;
+    const timer = window.setTimeout(() => setJustAdded(''), 900);
+    return () => window.clearTimeout(timer);
+  }, [justAdded]);
+
+  useEffect(() => {
+    localStorage.setItem('signbridge-theme', theme);
+    localStorage.setItem('signbridge-text', textSize);
+    localStorage.setItem('signbridge-speech', speechEnabled ? 'on' : 'off');
+  }, [theme, textSize, speechEnabled]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea')) return;
+      const undoKey = event.key === 'Backspace' || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z');
+      if (!undoKey) return;
+      event.preventDefault();
+      assemblerRef.current?.undo();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const replayHeldOut = () => {
     const interpreter = interpreterRef.current;
@@ -214,14 +269,185 @@ function App() {
   };
 
   const filtered = modelLabels.filter((label) => label.toLowerCase().includes(searchQuery.toLowerCase()));
+  const latestHearing = [...conversation].reverse().find((message) => message.sender === 'HEARING');
+  const hearingNow = interimHearingText || latestHearing?.text || '';
+  const handCount = trackingStatus.handsCount;
+  const handStatus = handCount === 0 ? 'No hand' : handCount === 1 ? 'Hand seen' : 'Two hands';
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={theme} data-text={textSize}>
+      <a className="skip-link" href="#live-caption">Skip to captions</a>
+      <header className="top-bar">
+        <div>
+          <h1>SignBridge</h1>
+          <p>ASL to English, on this device. You do not need sound.</p>
+        </div>
+        <div className="top-controls" role="toolbar" aria-label="Display settings">
+          <div className="control-group" role="group" aria-label="Caption size">
+            {(['sm', 'md', 'lg', 'xl'] as const).map((size) => (
+              <button key={size} type="button" aria-pressed={textSize === size} className={textSize === size ? 'is-on' : ''} onClick={() => setTextSize(size)}>
+                {size === 'sm' ? 'A' : size === 'md' ? 'A+' : size === 'lg' ? 'A++' : 'A+++'}
+              </button>
+            ))}
+          </div>
+          <div className="control-group" role="group" aria-label="Theme">
+            {([
+              ['light', 'Light'],
+              ['dark', 'Dark'],
+              ['contrast', 'Contrast'],
+            ] as const).map(([id, label]) => (
+              <button key={id} type="button" aria-pressed={theme === id} className={theme === id ? 'is-on' : ''} onClick={() => setTheme(id)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className={speechEnabled ? 'is-on' : ''}
+            aria-pressed={speechEnabled}
+            onClick={() => setSpeechEnabled(!speechEnabled)}
+          >
+            {speechEnabled ? 'Speaking aloud: on' : 'Speaking aloud: off'}
+          </button>
+        </div>
+      </header>
+
+      <section id="live-caption" className={`caption-stage ${justAdded ? 'is-committed' : ''}`} aria-live="polite">
+        <p className="caption-kicker">Your words</p>
+        <div className="caption-line">
+          {words.length === 0 && spelling.length === 0 ? (
+            <span className="caption-placeholder">Signs show up here as English.</span>
+          ) : (
+            words.map((word, index) => (
+              <button key={`${word}-${index}`} type="button" className="caption-word" onClick={() => assemblerRef.current?.removeAt(index)} aria-label={`Remove ${word}`}>
+                {word}
+              </button>
+            ))
+          )}
+        </div>
+        <div className="spell-row" aria-label="Fingerspelling">
+          {spelling.length === 0 ? (
+            <span className="spell-empty">Fingerspelled letters appear here.</span>
+          ) : (
+            spelling.map((letter, index) => (
+              <span key={`${letter}-${index}`} className="spell-tile">{letter}</span>
+            ))
+          )}
+        </div>
+        {justAdded && <p className="commit-flash" role="status">Added {justAdded}</p>}
+        <div className="status-row">
+          <span className={`status-chip ${handCount > 0 ? 'is-live' : ''}`}>{handStatus}</span>
+          <span className="status-chip">{phase === 'fingerspelling' ? 'Fingerspelling' : phase === 'signing' ? 'Signing' : 'Waiting'}</span>
+          <span className="status-chip">{forcedHand === 'AUTO' ? 'Either hand' : `${forcedHand} hand`}</span>
+          <div className="meter" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(matchConfidence)} aria-label="Confidence">
+            <div style={{ width: `${Math.max(0, Math.min(100, matchConfidence))}%` }} />
+            <span>{matchConfidence > 0 ? `${matchConfidence.toFixed(0)}%` : '—'}</span>
+          </div>
+        </div>
+        <p className="now-reading">{predictedSign}</p>
+        <p className={frameHint.match(/frame|closer|light|back|Raise/) ? 'frame-hint warn' : 'frame-hint'}>{frameHint}</p>
+        {topGuesses && <p className="top-guesses">Other guesses: {topGuesses}</p>}
+        <div className="caption-actions">
+          <button type="button" onClick={() => assemblerRef.current?.undo()} disabled={words.length + spelling.length === 0}>Undo</button>
+          <button type="button" onClick={() => assemblerRef.current?.clearBuffer()} disabled={words.length + spelling.length === 0}>Clear</button>
+          <button type="button" className="primary" onClick={() => assemblerRef.current?.commitLine()} disabled={words.length + spelling.length === 0}>Send line</button>
+          <button id="replay-held-out" type="button" onClick={replayHeldOut}>Replay a sample</button>
+        </div>
+      </section>
+
+      <div className="layout">
+        <section className="video-box" aria-label="Camera">
+          <div className="video-header">
+            <span>Camera</span>
+            <div className="telemetry-badges">
+              <span className="status-pill">{fps} FPS</span>
+              <button
+                className="status-pill-btn"
+                type="button"
+                title="AUTO follows the moving hand, including a left-handed signer. LEFT or RIGHT forces that hand."
+                onClick={() => setForcedHand(forcedHand === 'AUTO' ? 'LEFT' : forcedHand === 'LEFT' ? 'RIGHT' : 'AUTO')}
+              >
+                Hand: {forcedHand}
+              </button>
+            </div>
+          </div>
+          <div className="video-frame mirror-view">
+            <video ref={videoRef} className="video" autoPlay playsInline muted />
+            <canvas ref={canvasRef} className="video" />
+          </div>
+          <div className="video-footer">
+            <div>{trackingStatus.message}</div>
+            <div>{modelSummary}</div>
+          </div>
+        </section>
+
+        <section className="hearing-panel" aria-label="Hearing person">
+          <h2>Their words</h2>
+          <div className="hearing-hero" aria-live="polite">
+            {hearingNow || 'Type, or turn on speech-to-text. Their reply shows here.'}
+          </div>
+          <div className="caption-actions">
+            <button type="button" className={isMicListening ? 'is-on' : ''} aria-pressed={isMicListening} onClick={() => hearingRef.current?.toggleMicrophone()}>
+              {isMicListening ? 'Listening…' : 'Speech to text'}
+            </button>
+          </div>
+          <form
+            className="typed-reply-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!typedReplyText.trim()) return;
+              hearingRef.current?.sendTypedReply(typedReplyText);
+              setTypedReplyText('');
+            }}
+          >
+            <label htmlFor="reply-input">Type to the signer</label>
+            <input
+              id="reply-input"
+              className="typed-reply-input"
+              placeholder="English reply"
+              value={typedReplyText}
+              onChange={(event) => setTypedReplyText(event.target.value)}
+            />
+            <button className="primary" type="submit">Show text</button>
+          </form>
+        </section>
+      </div>
+
+      <section className="chat-box" aria-label="Conversation">
+        <h2>Conversation</h2>
+        <div className="chat-list" ref={chatScrollRef}>
+          {conversation.map((msg) => (
+            <article key={msg.id} className={`chat-item ${msg.sender === 'HEARING' ? 'chat-item-hearing' : ''}`}>
+              <header className="chat-msg-header">
+                <span>{msg.sender === 'SIGNER' ? 'You signed' : 'They said'}</span>
+                <time>{msg.timestamp}</time>
+              </header>
+              <p>{msg.text}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <details className="dict-box">
+        <summary>Words this model knows ({modelLabels.length})</summary>
+        <div className="dict-controls">
+          <label className="sr-only" htmlFor="gloss-search">Search glosses</label>
+          <input id="gloss-search" className="dict-search-input" type="search" placeholder="Search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
+          <button type="button" onClick={() => dataset.length && exportDatasetJSON(dataset)}>Export samples</button>
+          <button type="button" onClick={() => fileInputRef.current?.click()}>Import samples</button>
+        </div>
+        <ul className="gloss-list">
+          {filtered.map((label) => (
+            <li key={label}>{label}</li>
+          ))}
+        </ul>
+      </details>
       <input
         ref={fileInputRef}
         type="file"
         accept=".json"
-        style={{ display: 'none' }}
+        className="sr-only"
+        aria-label="Import dataset JSON"
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (!file) return;
@@ -236,160 +462,9 @@ function App() {
           reader.readAsText(file);
         }}
       />
-      <div className="layout">
-        <div className="video-box">
-          <span className="corner-cross">+</span>
-          <div className="video-header">
-            <span>ASL TO ENGLISH</span>
-            <div className="telemetry-badges">
-              <span className="status-pill">{fps} FPS</span>
-              <span className="status-pill highlight">{phase.toUpperCase()}</span>
-              <span className="status-pill">ON DEVICE</span>
-              <button
-                className="status-pill-btn"
-                type="button"
-                onClick={() => setForcedHand(forcedHand === 'AUTO' ? 'LEFT' : forcedHand === 'LEFT' ? 'RIGHT' : 'AUTO')}
-              >
-                HAND: {forcedHand}
-              </button>
-            </div>
-          </div>
-          <div className="video-frame mirror-view">
-            <video ref={videoRef} className="video" autoPlay playsInline muted />
-            <canvas ref={canvasRef} className="video" />
-          </div>
-          <div className="video-footer">
-            <div>{trackingStatus.message}</div>
-            <div className="grammar-badge">{modelSummary}</div>
-          </div>
-        </div>
-        <div className="side-stack">
-          <div className="chat-box">
-            <span className="corner-cross">+</span>
-            <div className="chat-header">
-              <div>ENGLISH CAPTIONS</div>
-              <button className="tts-toggle-btn" type="button" onClick={() => setSpeechEnabled(!speechEnabled)}>
-                {speechEnabled ? 'SPEECH ON' : 'SPEECH OFF'}
-              </button>
-            </div>
-            <div className="chat-status">
-              <div>
-                <span>English gloss</span>
-                <strong>{predictedSign}</strong>
-              </div>
-              <div>
-                <span>Confidence</span>
-                <strong>{matchConfidence > 0 ? `${matchConfidence.toFixed(0)}%` : '—'}</strong>
-              </div>
-            </div>
-            <div className="phrase-builder-box">
-              <div className="phrase-header">
-                <span>PHRASE</span>
-                <div className="phrase-actions">
-                  <button className="btn-phrase-speak" type="button" onClick={() => speak(currentPhrase.join(' '))} disabled={currentPhrase.length === 0}>
-                    SPEAK
-                  </button>
-                  <button className="btn-phrase-clear" type="button" onClick={() => assemblerRef.current?.clearBuffer()} disabled={currentPhrase.length === 0}>
-                    CLEAR
-                  </button>
-                  <button id="replay-held-out" className="btn-phrase-mock" type="button" onClick={replayHeldOut}>
-                    REPLAY HELD-OUT SIGN
-                  </button>
-                </div>
-              </div>
-              <div className="phrase-display">
-                {currentPhrase.length === 0 ? (
-                  <span className="phrase-empty">Recognized English words collect here. A pause finishes the line.</span>
-                ) : (
-                  currentPhrase.join(' ')
-                )}
-              </div>
-              {topGuesses && <div className="grammar-badge">Top guesses: {topGuesses}</div>}
-            </div>
-            <div className="chat-list" ref={chatScrollRef}>
-              {conversation.map((msg) => (
-                <div key={msg.id} className={`chat-item ${msg.sender === 'HEARING' ? 'chat-item-hearing' : ''}`}>
-                  <div className="chat-msg-header">
-                    <span className="chat-msg-sender">{msg.sender === 'SIGNER' ? 'SIGNER' : 'HEARING PERSON'}</span>
-                    <span className="chat-msg-time">{msg.timestamp}</span>
-                  </div>
-                  <div className="chat-msg-body">{msg.text}</div>
-                </div>
-              ))}
-              {interimHearingText && (
-                <div className="chat-item chat-item-hearing interim">
-                  <span className="chat-msg-sender">HEARING PERSON</span>
-                  <div className="chat-msg-body">{interimHearingText}</div>
-                </div>
-              )}
-            </div>
-            <div className="reverse-channel-bar">
-              <button className={`btn-mic-toggle ${isMicListening ? 'active' : ''}`} type="button" onClick={() => hearingRef.current?.toggleMicrophone()}>
-                {isMicListening ? 'LISTENING…' : 'SPEAK REPLY'}
-              </button>
-              <form
-                className="typed-reply-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (!typedReplyText.trim()) return;
-                  hearingRef.current?.sendTypedReply(typedReplyText);
-                  setTypedReplyText('');
-                }}
-              >
-                <label className="sr-only" htmlFor="reply-input">
-                  Reply for the signer to read
-                </label>
-                <input
-                  id="reply-input"
-                  className="typed-reply-input"
-                  placeholder="Type an English reply…"
-                  value={typedReplyText}
-                  onChange={(event) => setTypedReplyText(event.target.value)}
-                />
-                <button className="btn-send-reply" type="submit">
-                  SEND
-                </button>
-              </form>
-            </div>
-          </div>
-        </div>
-      </div>
-      <section className="dict-box">
-        <span className="corner-cross">+</span>
-        <div className="dict-header">
-          <div>ASL GLOSSES THIS MODEL CAN SAY IN ENGLISH</div>
-          <div className="dataset-actions-row">
-            <button className="btn-dataset-action" type="button" onClick={() => dataset.length && exportDatasetJSON(dataset)}>
-              EXPORT SAMPLES
-            </button>
-            <button className="btn-dataset-action" type="button" onClick={() => fileInputRef.current?.click()}>
-              IMPORT SAMPLES
-            </button>
-          </div>
-        </div>
-        <div className="dict-controls">
-          <input
-            className="dict-search-input"
-            type="search"
-            placeholder="Search the trained English glosses"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-          />
-        </div>
-        <div className="dict-grid">
-          {filtered.map((label) => (
-            <div key={label} className="dict-card">
-              <div className="dict-card-head">
-                <span className="dict-card-title">{label}</span>
-                <span className="dict-card-category">ASL</span>
-              </div>
-              <p className="dict-card-desc">Isolated sign. Output is this English gloss, not a full sentence translation.</p>
-            </div>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }
+
 
 export default App;

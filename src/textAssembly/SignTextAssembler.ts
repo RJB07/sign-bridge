@@ -106,6 +106,50 @@ export class SignTextAssembler {
     return { translatedText: result, ruleName };
   }
 
+  public getWords(): string[] {
+    return [...this.fullPhraseBuffer];
+  }
+
+  public getSpelling(): string[] {
+    return [...this.currentWordBuffer];
+  }
+
+  public undo(): void {
+    if (this.currentWordBuffer.length > 0) {
+      this.currentWordBuffer.pop();
+    } else if (this.fullPhraseBuffer.length > 0) {
+      this.fullPhraseBuffer.pop();
+    } else {
+      return;
+    }
+    this.lastSign = '';
+    this.onPhraseUpdate(this.getCurrentPhraseText());
+  }
+
+  public removeAt(index: number): void {
+    if (index < 0 || index >= this.fullPhraseBuffer.length) return;
+    this.fullPhraseBuffer.splice(index, 1);
+    this.lastSign = '';
+    this.onPhraseUpdate(this.getCurrentPhraseText());
+  }
+
+  public commitLine(): void {
+    if (this.currentWordBuffer.length > 0) {
+      this.fullPhraseBuffer.push(this.currentWordBuffer.join(''));
+      this.currentWordBuffer = [];
+    }
+    if (this.fullPhraseBuffer.length === 0) return;
+    const { translatedText, ruleName } = this.applyASLGrammarRules(this.fullPhraseBuffer);
+    this.onSentenceComplete({
+      id: Math.random().toString(36).substring(2, 9),
+      sender: 'SIGNER',
+      text: translatedText,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      grammarRuleApplied: ruleName,
+    });
+    this.clearBuffer();
+  }
+
   public getCurrentPhraseText(): string[] {
     const active = [...this.fullPhraseBuffer];
     if (this.currentWordBuffer.length > 0) {

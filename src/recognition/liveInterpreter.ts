@@ -6,6 +6,7 @@ export type GlossClassifier = {
   labels: string[];
   emitThreshold: number;
   marginThreshold: number;
+  classThresholds?: number[];
   predict: (sequence: number[][]) => Prediction;
 };
 
@@ -239,7 +240,9 @@ export class LiveInterpreter {
     const features = sequenceFeatures(slice, this.options.forcedHand);
     if (features.length < 2) return null;
     const prediction = this.classifier.predict(features);
-    if (prediction.confidence < threshold || prediction.margin < this.classifier.marginThreshold) return null;
+    const classIndex = this.classifier.labels.indexOf(prediction.label);
+    const classMin = this.classifier.classThresholds?.[classIndex] ?? this.classifier.emitThreshold;
+    if (prediction.confidence < Math.max(threshold, classMin) || prediction.margin < this.classifier.marginThreshold) return null;
     this.committedThisSegment = true;
     return { text: glossToEnglish(prediction.label), kind: 'gloss', confidence: prediction.confidence };
   }

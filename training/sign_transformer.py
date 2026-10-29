@@ -28,7 +28,7 @@ class EncoderBlock(nn.Module):
 
 
 class SignTransformer(nn.Module):
-    def __init__(self, feature_dim: int, classes: int, d_model: int = 96, heads: int = 4, layers: int = 2, ff: int = 192, dropout: float = 0.1, seq_len: int = 32):
+    def __init__(self, feature_dim: int, classes: int, d_model: int = 128, heads: int = 4, layers: int = 3, ff: int = 256, dropout: float = 0.2, seq_len: int = 32):
         super().__init__()
         self.d_model = d_model
         self.heads = heads

@@ -74,7 +74,7 @@ def make_landmarker(model_path: Path):
         running_mode=running_mode_lib.VisionTaskRunningMode.IMAGE,
         min_face_detection_confidence=0.4,
         min_pose_detection_confidence=0.4,
-        min_hand_landmarks_confidence=0.4,
+        min_hand_landmarks_confidence=0.35,
         output_face_blendshapes=False,
         output_segmentation_mask=False,
     )

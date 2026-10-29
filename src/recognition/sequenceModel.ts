@@ -1,4 +1,4 @@
-import { FEATURE_DIM, SEQ_LEN, resampleSequence } from './features';
+import { FEATURE_DIM, SEQ_LEN, mirrorSequence, resampleSequence } from './features';
 
 export type Prediction = {
   label: string;
@@ -22,6 +22,8 @@ export type SequenceModel = {
   dModel: number;
   heads: number;
   layers: number;
+  classThresholds: number[];
+  tta: boolean;
   members: WeightBlob[];
 };
 
@@ -35,6 +37,8 @@ type ModelFile = {
   labels: string[];
   emitThreshold: number;
   marginThreshold: number;
+  classThresholds?: number[];
+  tta?: boolean;
   members: WeightBlob[];
 };
 
@@ -193,6 +197,8 @@ export function modelFromJson(payload: ModelFile): SequenceModel {
     labels: payload.labels,
     emitThreshold: payload.emitThreshold,
     marginThreshold: payload.marginThreshold,
+    classThresholds: payload.classThresholds ?? payload.labels.map(() => payload.emitThreshold),
+    tta: Boolean(payload.tta),
     featureDim: payload.featureDim,
     seqLen: payload.seqLen,
     dModel: payload.dModel,
@@ -217,13 +223,23 @@ export function logitsForSequence(model: SequenceModel, sequence: number[][]): F
 }
 
 export function predictSequence(model: SequenceModel, sequence: number[][]): Prediction {
-  const logits = logitsForSequence(model, sequence);
+  const prepared = sequence.length === model.seqLen ? sequence : resampleSequence(sequence, model.seqLen);
+  const views = model.tta ? [prepared, mirrorSequence(prepared)] : [prepared];
+  const acc = new Float32Array(model.labels.length);
+  for (const view of views) {
+    for (const member of model.members) {
+      const logits = logitsForMember(view, member, model.dModel, model.heads, model.layers);
+      for (let i = 0; i < acc.length; i++) acc[i] += logits[i];
+    }
+  }
+  const denomViews = views.length * model.members.length;
+  for (let i = 0; i < acc.length; i++) acc[i] /= denomViews;
   let max = -Infinity;
-  for (let i = 0; i < logits.length; i++) if (logits[i] > max) max = logits[i];
-  const probabilities = new Array<number>(logits.length);
+  for (let i = 0; i < acc.length; i++) if (acc[i] > max) max = acc[i];
+  const probabilities = new Array<number>(acc.length);
   let denom = 0;
-  for (let i = 0; i < logits.length; i++) {
-    const e = Math.exp(logits[i] - max);
+  for (let i = 0; i < acc.length; i++) {
+    const e = Math.exp(acc[i] - max);
     probabilities[i] = e;
     denom += e;
   }

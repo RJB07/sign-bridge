@@ -138,15 +138,25 @@ def resample_sequence(seq: np.ndarray, length: int = SEQ_LEN) -> np.ndarray:
     return out
 
 
+def mirror_sequence(seq: np.ndarray) -> np.ndarray:
+    """Flip the horizontal axis of an already-normalized feature sequence."""
+    out = np.array(seq, dtype=np.float32, copy=True)
+    out[..., 0::3] *= -1
+    return out
+
+
 def augment_sequence(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     seq = np.array(seq, dtype=np.float32, copy=True)
-    if seq.shape[0] > 4 and rng.random() < 0.8:
-        short = int(rng.integers(max(3, int(seq.shape[0] * 0.65)), seq.shape[0] + 1))
-        seq = resample_sequence(seq, short)
-    if seq.shape[0] > 6 and rng.random() < 0.5:
+    if seq.shape[0] > 3 and rng.random() < 0.85:
+        low = max(3, int(seq.shape[0] * 0.55))
+        high = min(48, max(low + 1, int(seq.shape[0] * 1.6)))
+        seq = resample_sequence(seq, int(rng.integers(low, high)))
+    if seq.shape[0] > 6 and rng.random() < 0.6:
         drop = int(rng.integers(0, seq.shape[0]))
         seq = np.delete(seq, drop, axis=0)
-    angle = float(rng.uniform(-0.25, 0.25))
+    if rng.random() < 0.5:
+        seq = mirror_sequence(seq)
+    angle = float(rng.uniform(-0.4, 0.4))
     c, s = np.cos(angle), np.sin(angle)
     flat = seq.reshape(seq.shape[0], -1, 3)
     x = flat[:, :, 0].copy()
@@ -154,6 +164,12 @@ def augment_sequence(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     flat[:, :, 0] = c * x - s * y
     flat[:, :, 1] = s * x + c * y
     seq = flat.reshape(seq.shape[0], -1)
-    seq *= float(rng.uniform(0.9, 1.1))
-    seq += rng.normal(0.0, 0.012, size=seq.shape).astype(np.float32)
+    seq *= float(rng.uniform(0.75, 1.25))
+    if rng.random() < 0.45:
+        for _ in range(int(rng.integers(1, 4))):
+            landmark = int(rng.integers(0, 21))
+            seq[:, landmark * 3 : landmark * 3 + 3] = 0
+            if seq.shape[1] >= 210:
+                seq[:, 147 + landmark * 3 : 147 + landmark * 3 + 3] = 0
+    seq += rng.normal(0.0, 0.02, size=seq.shape).astype(np.float32)
     return seq.astype(np.float32)
