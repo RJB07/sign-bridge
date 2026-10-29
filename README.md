@@ -18,23 +18,27 @@ Open the URL Vite prints and allow the camera. The overlay is mirrored. **Replay
 
 ## What you should expect
 
-The shipped model is a small conv + GRU over MediaPipe Holistic landmarks. On PopSign signers held out of training (31 train / 8 validation / 8 test, no signer in two splits):
+The shipped recognizer is an ensemble of two small landmark transformers. It sees both hands, arm pose, and frame-to-frame motion. On PopSign’s official signer split (31 train / 8 validation / 8 test, no shared signer):
 
 | | |
 | --- | --- |
-| Gloss vocabulary | 32 English words (TV through brown, including book, boy, bird, brother) |
-| Test clips | 447 |
-| Top-1 | **59.1%** |
-| Top-5 | **84.3%** |
-| Macro recall | 59.5% |
-| Chance top-1 | 3.1% |
-| Live gate on test | 69.7% precision when it commits, on 77.6% of clips (threshold 0.30, margin 0.04, chosen on validation) |
+| Gloss vocabulary | **250** English glosses, the full PopSign / Google ASL Signs list |
+| Train / val / test clips | 9198 / 2799 / 2744 |
+| Test top-1 | **50.4%** |
+| Test top-5 | **75.7%** |
+| Macro recall | 50.4% |
+| Chance top-1 | 0.4% |
+| Live gate on test | 72.6% precision when it commits, on 56.7% of clips |
 
-Per-class precision and recall are in `training/metrics/asl_en_metrics.json`. Recall is high for apple, blow, and bed, and low for bad, better, and brother, which are easy to confuse with nearby signs. The same summary is embedded in `public/models/asl-en-sequence.json`.
+A 32-gloss model earlier on this branch scored 59.1% top-1. That number is not comparable: this model chooses among 250 signs. Chance falls from 3.1% to 0.4%. Conversational glosses are in the 250, with noisy per-class recall on the small test counts: thank you 75% (8 clips), no 60% (10), please 50% (10), dad 64% (11), hello 27% (11), yes 30% (10). **Help is not in this 250-sign list.**
+
+Per-class precision and recall: `training/metrics/asl_en_metrics.json`.
+
+Fingerspelling is a separate static network trained on the MIT dataset `sid220/asl-now-fingerspelling` (A–Z, including J and Z). Filename-hash holdout top-1 is **92.3%** (222 test frames). J recall 91% (11 frames), Z recall 100% (10 frames). **Signer ids are not in that dataset, so this letter number is not signer-independent.** Details: `training/metrics/fingerspelling_metrics.json`.
 
 Live output is suppressed unless the score clears a threshold picked on the validation signers. A gloss is added to the phrase once per motion segment. After a pause, the line is spoken with the Web Speech API.
 
-Fingerspelling is a separate geometric helper for the handshapes A, B, C, F, I, L, V, W, and Y. It is not a measured letter-recognition model. J and Z are not supported.
+Fingerspelling letters A–Z, including J and Z, come from a static landmark network. See the metrics file for the holdout caveat. A pause joins glosses into a line of English and speaks it.
 
 ## Dataset and license
 
@@ -80,7 +84,10 @@ To cover more of the 250 PopSign glosses, add later alphabetical shards to `trai
 
 ## Limits
 
-Isolated signs only. The baseline vocabulary is the PopSign glosses present in every split of the downloaded shards (A through “brown”, including book, boy, bird, brother). Two-handed signs, continuous sentences, and conversational phrases such as “thank you” are outside this model. Training clips are short and about 5 frames per second. Do not treat the confidence percentage as a clinical measurement.
+- The vocabulary is the 250 PopSign glosses. Help is not one of them. Two-handed signs are represented when both hands are in frame, but PopSign is mostly one-handed phone signing.
+- Training clips are short and about 5 frames per second.
+- Fingerspelling holdout is not signer-independent.
+- Do not treat the confidence percentage as a clinical measurement.
 
 ## Database
 

@@ -2,7 +2,8 @@
   "task": "isolated ASL gloss to English",
   "language": "ase",
   "outputLanguage": "en",
-  "dataset": "PopSign ASL v1.0 game images (CC BY 4.0), MediaPipe Holistic landmarks",
+  "architecture": "ensemble of 2 pre-norm landmark transformers, both hands + pose",
+  "dataset": "PopSign ASL v1.0 game images (CC BY 4.0), MediaPipe Holistic landmarks. Same 250 glosses as Google ASL Signs. ASL Citizen and WLASL were not used because their licenses do not allow shipping derived weights.",
   "split": "official PopSign train/validation/test, signer-disjoint",
   "signerLeakage": {
     "train&validation": [],
@@ -64,529 +65,2250 @@
       "gtsignstudy4a.8047"
     ]
   },
-  "classes": 32,
+  "classes": 250,
   "counts": {
-    "train": 1388,
-    "validation": 476,
-    "test": 447
+    "train": 9198,
+    "validation": 2799,
+    "test": 2744
   },
-  "testTop1": 0.5906,
-  "testTop5": 0.8434,
-  "testMacroRecall": 0.5952,
-  "validationTop1": 0.6387,
-  "validationTop5": 0.8782,
-  "chanceTop1": 0.0312,
+  "testTop1": 0.5044,
+  "testTop5": 0.7569,
+  "testMacroRecall": 0.5037,
+  "validationTop1": 0.527,
+  "validationTop5": 0.7871,
+  "chanceTop1": 0.004,
   "emit": {
-    "threshold": 0.3,
-    "margin": 0.04,
-    "precision": 0.7447,
-    "coverage": 0.7983,
-    "recall": 0.5945,
-    "f1": 0.6612,
-    "candidates": [
-      {
-        "threshold": 0.3,
-        "margin": 0.04,
-        "precision": 0.7447,
-        "coverage": 0.7983,
-        "recall": 0.5945,
-        "f1": 0.6612
-      },
-      {
-        "threshold": 0.35,
-        "margin": 0.04,
-        "precision": 0.773,
-        "coverage": 0.7311,
-        "recall": 0.5651,
-        "f1": 0.6529
-      },
-      {
-        "threshold": 0.3,
-        "margin": 0.08,
-        "precision": 0.75,
-        "coverage": 0.7563,
-        "recall": 0.5672,
-        "f1": 0.6459
-      },
-      {
-        "threshold": 0.35,
-        "margin": 0.08,
-        "precision": 0.7795,
-        "coverage": 0.6954,
-        "recall": 0.542,
-        "f1": 0.6394
-      },
-      {
-        "threshold": 0.3,
-        "margin": 0.12,
-        "precision": 0.7618,
-        "coverage": 0.7143,
-        "recall": 0.5441,
-        "f1": 0.6348
-      },
-      {
-        "threshold": 0.35,
-        "margin": 0.12,
-        "precision": 0.7862,
-        "coverage": 0.6681,
-        "recall": 0.5252,
-        "f1": 0.6297
-      },
-      {
-        "threshold": 0.4,
-        "margin": 0.04,
-        "precision": 0.7948,
-        "coverage": 0.645,
-        "recall": 0.5126,
-        "f1": 0.6232
-      },
-      {
-        "threshold": 0.3,
-        "margin": 0.16,
-        "precision": 0.7736,
-        "coverage": 0.6681,
-        "recall": 0.5168,
-        "f1": 0.6196
-      }
-    ]
+    "threshold": 0.35,
+    "margin": 0.12,
+    "precision": 0.7272,
+    "coverage": 0.5763,
+    "recall": 0.4191,
+    "f1": 0.5317
   },
-  "numpyMaxAbsDiff": 4.76837158203125e-07,
+  "emitCandidates": [
+    {
+      "threshold": 0.3,
+      "margin": 0.04,
+      "precision": 0.6767,
+      "coverage": 0.6785,
+      "recall": 0.4591,
+      "f1": 0.547
+    },
+    {
+      "threshold": 0.3,
+      "margin": 0.08,
+      "precision": 0.685,
+      "coverage": 0.6556,
+      "recall": 0.4491,
+      "f1": 0.5425
+    },
+    {
+      "threshold": 0.35,
+      "margin": 0.04,
+      "precision": 0.7135,
+      "coverage": 0.6049,
+      "recall": 0.4316,
+      "f1": 0.5378
+    },
+    {
+      "threshold": 0.35,
+      "margin": 0.08,
+      "precision": 0.7193,
+      "coverage": 0.5956,
+      "recall": 0.4284,
+      "f1": 0.5369
+    },
+    {
+      "threshold": 0.3,
+      "margin": 0.12,
+      "precision": 0.7006,
+      "coverage": 0.6206,
+      "recall": 0.4348,
+      "f1": 0.5366
+    },
+    {
+      "threshold": 0.35,
+      "margin": 0.12,
+      "precision": 0.7272,
+      "coverage": 0.5763,
+      "recall": 0.4191,
+      "f1": 0.5317
+    },
+    {
+      "threshold": 0.3,
+      "margin": 0.16,
+      "precision": 0.7165,
+      "coverage": 0.5834,
+      "recall": 0.418,
+      "f1": 0.528
+    },
+    {
+      "threshold": 0.35,
+      "margin": 0.16,
+      "precision": 0.7376,
+      "coverage": 0.5541,
+      "recall": 0.4087,
+      "f1": 0.526
+    }
+  ],
+  "testAtEmit": {
+    "threshold": 0.35,
+    "margin": 0.12,
+    "precision": 0.726,
+    "coverage": 0.5667
+  },
+  "focusGlosses": [
+    {
+      "label": "dad",
+      "support": 11,
+      "predicted": 15,
+      "precision": 0.4667,
+      "recall": 0.6364
+    },
+    {
+      "label": "hello",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.3333,
+      "recall": 0.2727
+    },
+    {
+      "label": "mom",
+      "support": 12,
+      "predicted": 15,
+      "precision": 0.4,
+      "recall": 0.5
+    },
+    {
+      "label": "no",
+      "support": 10,
+      "predicted": 15,
+      "precision": 0.4,
+      "recall": 0.6
+    },
+    {
+      "label": "please",
+      "support": 10,
+      "predicted": 9,
+      "precision": 0.5556,
+      "recall": 0.5
+    },
+    {
+      "label": "thankyou",
+      "support": 8,
+      "predicted": 14,
+      "precision": 0.4286,
+      "recall": 0.75
+    },
+    {
+      "label": "water",
+      "support": 11,
+      "predicted": 13,
+      "precision": 0.6923,
+      "recall": 0.8182
+    },
+    {
+      "label": "yes",
+      "support": 10,
+      "predicted": 8,
+      "precision": 0.375,
+      "recall": 0.3
+    }
+  ],
+  "numpyMaxAbsDiff": 9.5367431640625e-07,
   "history": [
     {
+      "seed": 0,
       "epoch": 1,
-      "trainLoss": 3.4675,
-      "trainTop1": 0.0418,
-      "valTop1": 0.0735,
-      "valTop5": 0.3424
+      "trainLoss": 5.4711,
+      "trainTop1": 0.0078,
+      "valTop1": 0.0322,
+      "valTop5": 0.1208
     },
     {
+      "seed": 0,
       "epoch": 2,
-      "trainLoss": 3.3636,
-      "trainTop1": 0.0886,
-      "valTop1": 0.0903,
-      "valTop5": 0.3761
+      "trainLoss": 4.6659,
+      "trainTop1": 0.0628,
+      "valTop1": 0.1068,
+      "valTop5": 0.3523
     },
     {
+      "seed": 0,
       "epoch": 3,
-      "trainLoss": 3.042,
-      "trainTop1": 0.1369,
-      "valTop1": 0.2122,
-      "valTop5": 0.5882
+      "trainLoss": 4.0889,
+      "trainTop1": 0.1474,
+      "valTop1": 0.1847,
+      "valTop5": 0.4716
     },
     {
+      "seed": 0,
       "epoch": 4,
-      "trainLoss": 2.8349,
-      "trainTop1": 0.2161,
-      "valTop1": 0.2962,
-      "valTop5": 0.6324
+      "trainLoss": 3.6941,
+      "trainTop1": 0.229,
+      "valTop1": 0.2465,
+      "valTop5": 0.5627
     },
     {
+      "seed": 0,
       "epoch": 5,
-      "trainLoss": 2.6385,
-      "trainTop1": 0.2867,
-      "valTop1": 0.3403,
-      "valTop5": 0.7206
+      "trainLoss": 3.397,
+      "trainTop1": 0.2928,
+      "valTop1": 0.2958,
+      "valTop5": 0.6066
     },
     {
+      "seed": 0,
       "epoch": 6,
-      "trainLoss": 2.5011,
-      "trainTop1": 0.353,
-      "valTop1": 0.3845,
-      "valTop5": 0.7794
+      "trainLoss": 3.1496,
+      "trainTop1": 0.3446,
+      "valTop1": 0.3541,
+      "valTop5": 0.6688
     },
     {
+      "seed": 0,
       "epoch": 7,
-      "trainLoss": 2.3386,
-      "trainTop1": 0.3862,
-      "valTop1": 0.4202,
-      "valTop5": 0.7836
+      "trainLoss": 2.9503,
+      "trainTop1": 0.3851,
+      "valTop1": 0.3708,
+      "valTop5": 0.6956
     },
     {
+      "seed": 0,
       "epoch": 8,
-      "trainLoss": 2.2021,
-      "trainTop1": 0.4618,
-      "valTop1": 0.4055,
-      "valTop5": 0.7983
+      "trainLoss": 2.7971,
+      "trainTop1": 0.4174,
+      "valTop1": 0.3909,
+      "valTop5": 0.7013
     },
     {
+      "seed": 0,
       "epoch": 9,
-      "trainLoss": 2.1228,
-      "trainTop1": 0.4712,
-      "valTop1": 0.4538,
-      "valTop5": 0.8193
+      "trainLoss": 2.6629,
+      "trainTop1": 0.4357,
+      "valTop1": 0.388,
+      "valTop5": 0.7088
     },
     {
+      "seed": 0,
       "epoch": 10,
-      "trainLoss": 2.0246,
-      "trainTop1": 0.5223,
-      "valTop1": 0.4559,
-      "valTop5": 0.8382
+      "trainLoss": 2.5419,
+      "trainTop1": 0.4679,
+      "valTop1": 0.4159,
+      "valTop5": 0.7213
     },
     {
+      "seed": 0,
       "epoch": 11,
-      "trainLoss": 1.9478,
-      "trainTop1": 0.5331,
-      "valTop1": 0.5315,
-      "valTop5": 0.8424
+      "trainLoss": 2.4422,
+      "trainTop1": 0.4914,
+      "valTop1": 0.423,
+      "valTop5": 0.7335
     },
     {
+      "seed": 0,
       "epoch": 12,
-      "trainLoss": 1.8664,
-      "trainTop1": 0.5684,
-      "valTop1": 0.521,
-      "valTop5": 0.8298
+      "trainLoss": 2.3686,
+      "trainTop1": 0.5004,
+      "valTop1": 0.4452,
+      "valTop5": 0.7442
     },
     {
+      "seed": 0,
       "epoch": 13,
-      "trainLoss": 1.7812,
-      "trainTop1": 0.5973,
-      "valTop1": 0.5147,
-      "valTop5": 0.8319
+      "trainLoss": 2.276,
+      "trainTop1": 0.5269,
+      "valTop1": 0.4477,
+      "valTop5": 0.7467
     },
     {
+      "seed": 0,
       "epoch": 14,
-      "trainLoss": 1.7338,
-      "trainTop1": 0.5973,
-      "valTop1": 0.5357,
-      "valTop5": 0.8529
+      "trainLoss": 2.2148,
+      "trainTop1": 0.5389,
+      "valTop1": 0.4494,
+      "valTop5": 0.7435
     },
     {
+      "seed": 0,
       "epoch": 15,
-      "trainLoss": 1.7397,
-      "trainTop1": 0.5922,
-      "valTop1": 0.5651,
-      "valTop5": 0.8613
+      "trainLoss": 2.1526,
+      "trainTop1": 0.5549,
+      "valTop1": 0.4848,
+      "valTop5": 0.7656
     },
     {
+      "seed": 0,
       "epoch": 16,
-      "trainLoss": 1.6564,
-      "trainTop1": 0.6174,
-      "valTop1": 0.542,
-      "valTop5": 0.855
+      "trainLoss": 2.0871,
+      "trainTop1": 0.5638,
+      "valTop1": 0.4698,
+      "valTop5": 0.7585
     },
     {
+      "seed": 0,
       "epoch": 17,
-      "trainLoss": 1.6035,
-      "trainTop1": 0.6354,
-      "valTop1": 0.5651,
-      "valTop5": 0.8634
+      "trainLoss": 2.0305,
+      "trainTop1": 0.5746,
+      "valTop1": 0.4845,
+      "valTop5": 0.7581
     },
     {
+      "seed": 0,
       "epoch": 18,
-      "trainLoss": 1.5622,
-      "trainTop1": 0.6427,
-      "valTop1": 0.5504,
-      "valTop5": 0.8571
+      "trainLoss": 1.9654,
+      "trainTop1": 0.592,
+      "valTop1": 0.4502,
+      "valTop5": 0.7481
     },
     {
+      "seed": 0,
       "epoch": 19,
-      "trainLoss": 1.5071,
-      "trainTop1": 0.6592,
-      "valTop1": 0.5966,
-      "valTop5": 0.8782
+      "trainLoss": 1.9238,
+      "trainTop1": 0.607,
+      "valTop1": 0.473,
+      "valTop5": 0.7528
     },
     {
+      "seed": 0,
       "epoch": 20,
-      "trainLoss": 1.4726,
-      "trainTop1": 0.6794,
-      "valTop1": 0.6071,
-      "valTop5": 0.8803
+      "trainLoss": 1.8608,
+      "trainTop1": 0.6156,
+      "valTop1": 0.4687,
+      "valTop5": 0.7563
     },
     {
+      "seed": 1,
+      "epoch": 1,
+      "trainLoss": 5.404,
+      "trainTop1": 0.0107,
+      "valTop1": 0.0425,
+      "valTop5": 0.164
+    },
+    {
+      "seed": 1,
+      "epoch": 2,
+      "trainLoss": 4.5614,
+      "trainTop1": 0.0768,
+      "valTop1": 0.135,
+      "valTop5": 0.3794
+    },
+    {
+      "seed": 1,
+      "epoch": 3,
+      "trainLoss": 4.0058,
+      "trainTop1": 0.1679,
+      "valTop1": 0.2044,
+      "valTop5": 0.5041
+    },
+    {
+      "seed": 1,
+      "epoch": 4,
+      "trainLoss": 3.6319,
+      "trainTop1": 0.2531,
+      "valTop1": 0.2608,
+      "valTop5": 0.5763
+    },
+    {
+      "seed": 1,
+      "epoch": 5,
+      "trainLoss": 3.3397,
+      "trainTop1": 0.3065,
+      "valTop1": 0.3219,
+      "valTop5": 0.6567
+    },
+    {
+      "seed": 1,
+      "epoch": 6,
+      "trainLoss": 3.1101,
+      "trainTop1": 0.3539,
+      "valTop1": 0.3505,
+      "valTop5": 0.6817
+    },
+    {
+      "seed": 1,
+      "epoch": 7,
+      "trainLoss": 2.9264,
+      "trainTop1": 0.3916,
+      "valTop1": 0.3233,
+      "valTop5": 0.6463
+    },
+    {
+      "seed": 1,
+      "epoch": 8,
+      "trainLoss": 2.7781,
+      "trainTop1": 0.4204,
+      "valTop1": 0.3901,
+      "valTop5": 0.7042
+    },
+    {
+      "seed": 1,
+      "epoch": 9,
+      "trainLoss": 2.6505,
+      "trainTop1": 0.4412,
+      "valTop1": 0.378,
+      "valTop5": 0.6999
+    },
+    {
+      "seed": 1,
+      "epoch": 10,
+      "trainLoss": 2.5504,
+      "trainTop1": 0.4627,
+      "valTop1": 0.4223,
+      "valTop5": 0.7306
+    },
+    {
+      "seed": 1,
+      "epoch": 11,
+      "trainLoss": 2.4194,
+      "trainTop1": 0.491,
+      "valTop1": 0.4184,
+      "valTop5": 0.7324
+    },
+    {
+      "seed": 1,
+      "epoch": 12,
+      "trainLoss": 2.3393,
+      "trainTop1": 0.507,
+      "valTop1": 0.4337,
+      "valTop5": 0.732
+    },
+    {
+      "seed": 1,
+      "epoch": 13,
+      "trainLoss": 2.2717,
+      "trainTop1": 0.5207,
+      "valTop1": 0.4559,
+      "valTop5": 0.7431
+    },
+    {
+      "seed": 1,
+      "epoch": 14,
+      "trainLoss": 2.1835,
+      "trainTop1": 0.5451,
+      "valTop1": 0.453,
+      "valTop5": 0.7467
+    },
+    {
+      "seed": 1,
+      "epoch": 15,
+      "trainLoss": 2.1248,
+      "trainTop1": 0.5615,
+      "valTop1": 0.4641,
+      "valTop5": 0.7488
+    },
+    {
+      "seed": 1,
+      "epoch": 16,
+      "trainLoss": 2.0578,
+      "trainTop1": 0.5758,
+      "valTop1": 0.4484,
+      "valTop5": 0.7378
+    },
+    {
+      "seed": 1,
+      "epoch": 17,
+      "trainLoss": 2.0076,
+      "trainTop1": 0.5828,
+      "valTop1": 0.4577,
+      "valTop5": 0.7549
+    },
+    {
+      "seed": 1,
+      "epoch": 18,
+      "trainLoss": 1.9683,
+      "trainTop1": 0.5946,
+      "valTop1": 0.4941,
+      "valTop5": 0.7685
+    },
+    {
+      "seed": 1,
+      "epoch": 19,
+      "trainLoss": 1.9328,
+      "trainTop1": 0.5976,
+      "valTop1": 0.4798,
+      "valTop5": 0.761
+    },
+    {
+      "seed": 1,
+      "epoch": 20,
+      "trainLoss": 1.8665,
+      "trainTop1": 0.6169,
+      "valTop1": 0.4652,
+      "valTop5": 0.7592
+    },
+    {
+      "seed": 1,
       "epoch": 21,
-      "trainLoss": 1.4689,
-      "trainTop1": 0.6693,
-      "valTop1": 0.6113,
-      "valTop5": 0.8739
+      "trainLoss": 1.8114,
+      "trainTop1": 0.6276,
+      "valTop1": 0.4841,
+      "valTop5": 0.7542
     },
     {
+      "seed": 1,
       "epoch": 22,
-      "trainLoss": 1.4152,
-      "trainTop1": 0.6873,
-      "valTop1": 0.584,
-      "valTop5": 0.8613
-    },
-    {
-      "epoch": 23,
-      "trainLoss": 1.3852,
-      "trainTop1": 0.6981,
-      "valTop1": 0.6239,
-      "valTop5": 0.8782
-    },
-    {
-      "epoch": 24,
-      "trainLoss": 1.3704,
-      "trainTop1": 0.7046,
-      "valTop1": 0.6239,
-      "valTop5": 0.8887
-    },
-    {
-      "epoch": 25,
-      "trainLoss": 1.332,
-      "trainTop1": 0.7226,
-      "valTop1": 0.5903,
-      "valTop5": 0.8782
-    },
-    {
-      "epoch": 26,
-      "trainLoss": 1.3118,
-      "trainTop1": 0.7327,
-      "valTop1": 0.6387,
-      "valTop5": 0.8782
-    },
-    {
-      "epoch": 27,
-      "trainLoss": 1.2678,
-      "trainTop1": 0.7298,
-      "valTop1": 0.6176,
-      "valTop5": 0.8761
-    },
-    {
-      "epoch": 28,
-      "trainLoss": 1.2524,
-      "trainTop1": 0.7435,
-      "valTop1": 0.6261,
-      "valTop5": 0.8718
+      "trainLoss": 1.7732,
+      "trainTop1": 0.64,
+      "valTop1": 0.4652,
+      "valTop5": 0.7435
     }
   ],
   "perClassTest": [
     {
       "label": "TV",
-      "support": 15,
-      "predicted": 13,
-      "precision": 0.7692,
-      "recall": 0.6667
+      "support": 11,
+      "predicted": 15,
+      "precision": 0.4667,
+      "recall": 0.6364
     },
     {
       "label": "after",
-      "support": 16,
-      "predicted": 21,
-      "precision": 0.3333,
-      "recall": 0.4375
+      "support": 12,
+      "predicted": 9,
+      "precision": 0.1111,
+      "recall": 0.0833
     },
     {
       "label": "airplane",
-      "support": 15,
-      "predicted": 11,
-      "precision": 0.5455,
-      "recall": 0.4
+      "support": 11,
+      "predicted": 8,
+      "precision": 0.875,
+      "recall": 0.6364
     },
     {
       "label": "all",
-      "support": 14,
-      "predicted": 10,
-      "precision": 0.7,
-      "recall": 0.5
+      "support": 10,
+      "predicted": 9,
+      "precision": 0.3333,
+      "recall": 0.3
     },
     {
       "label": "alligator",
-      "support": 15,
-      "predicted": 14,
-      "precision": 0.7143,
-      "recall": 0.6667
+      "support": 11,
+      "predicted": 7,
+      "precision": 0.5714,
+      "recall": 0.3636
     },
     {
       "label": "animal",
-      "support": 14,
-      "predicted": 9,
-      "precision": 0.7778,
-      "recall": 0.5
+      "support": 8,
+      "predicted": 3,
+      "precision": 0.3333,
+      "recall": 0.125
     },
     {
       "label": "another",
-      "support": 13,
-      "predicted": 10,
-      "precision": 0.8,
-      "recall": 0.6154
+      "support": 11,
+      "predicted": 18,
+      "precision": 0.4444,
+      "recall": 0.7273
     },
     {
       "label": "any",
-      "support": 13,
-      "predicted": 20,
-      "precision": 0.5,
-      "recall": 0.7692
+      "support": 9,
+      "predicted": 10,
+      "precision": 0.7,
+      "recall": 0.7778
     },
     {
       "label": "apple",
-      "support": 14,
-      "predicted": 18,
-      "precision": 0.7778,
-      "recall": 1.0
-    },
-    {
-      "label": "arm",
-      "support": 13,
-      "predicted": 26,
-      "precision": 0.4231,
-      "recall": 0.8462
-    },
-    {
-      "label": "aunt",
-      "support": 14,
-      "predicted": 20,
-      "precision": 0.6,
-      "recall": 0.8571
-    },
-    {
-      "label": "awake",
-      "support": 15,
-      "predicted": 15,
-      "precision": 0.7333,
-      "recall": 0.7333
-    },
-    {
-      "label": "backyard",
-      "support": 16,
-      "predicted": 13,
-      "precision": 0.6154,
-      "recall": 0.5
-    },
-    {
-      "label": "bad",
-      "support": 15,
-      "predicted": 9,
-      "precision": 0.5556,
-      "recall": 0.3333
-    },
-    {
-      "label": "balloon",
-      "support": 15,
-      "predicted": 14,
-      "precision": 0.8571,
+      "support": 10,
+      "predicted": 8,
+      "precision": 1.0,
       "recall": 0.8
     },
     {
-      "label": "bath",
-      "support": 15,
-      "predicted": 11,
-      "precision": 0.6364,
-      "recall": 0.4667
-    },
-    {
-      "label": "because",
-      "support": 15,
-      "predicted": 18,
-      "precision": 0.4444,
-      "recall": 0.5333
-    },
-    {
-      "label": "bed",
-      "support": 13,
-      "predicted": 17,
-      "precision": 0.7059,
-      "recall": 0.9231
-    },
-    {
-      "label": "bedroom",
-      "support": 14,
-      "predicted": 10,
-      "precision": 0.7,
-      "recall": 0.5
-    },
-    {
-      "label": "bee",
-      "support": 15,
-      "predicted": 12,
-      "precision": 0.5,
-      "recall": 0.4
-    },
-    {
-      "label": "before",
-      "support": 13,
-      "predicted": 9,
-      "precision": 0.7778,
-      "recall": 0.5385
-    },
-    {
-      "label": "beside",
-      "support": 13,
-      "predicted": 10,
-      "precision": 0.6,
-      "recall": 0.4615
-    },
-    {
-      "label": "better",
-      "support": 16,
-      "predicted": 10,
-      "precision": 0.6,
-      "recall": 0.375
-    },
-    {
-      "label": "bird",
-      "support": 14,
+      "label": "arm",
+      "support": 10,
       "predicted": 19,
-      "precision": 0.6316,
-      "recall": 0.8571
+      "precision": 0.4211,
+      "recall": 0.8
     },
     {
-      "label": "black",
-      "support": 15,
-      "predicted": 12,
-      "precision": 0.5,
-      "recall": 0.4
-    },
-    {
-      "label": "blow",
-      "support": 12,
-      "predicted": 19,
-      "precision": 0.6316,
-      "recall": 1.0
-    },
-    {
-      "label": "blue",
-      "support": 13,
-      "predicted": 13,
-      "precision": 0.4615,
-      "recall": 0.4615
-    },
-    {
-      "label": "boat",
-      "support": 15,
-      "predicted": 21,
+      "label": "aunt",
+      "support": 10,
+      "predicted": 14,
       "precision": 0.4286,
       "recall": 0.6
     },
     {
-      "label": "book",
-      "support": 14,
-      "predicted": 15,
-      "precision": 0.4,
-      "recall": 0.4286
+      "label": "awake",
+      "support": 11,
+      "predicted": 2,
+      "precision": 0.0,
+      "recall": 0.0
     },
     {
-      "label": "boy",
-      "support": 15,
+      "label": "backyard",
+      "support": 11,
+      "predicted": 11,
+      "precision": 0.3636,
+      "recall": 0.3636
+    },
+    {
+      "label": "bad",
+      "support": 11,
       "predicted": 10,
-      "precision": 0.9,
+      "precision": 0.3,
+      "recall": 0.2727
+    },
+    {
+      "label": "balloon",
+      "support": 12,
+      "predicted": 12,
+      "precision": 0.8333,
+      "recall": 0.8333
+    },
+    {
+      "label": "bath",
+      "support": 9,
+      "predicted": 13,
+      "precision": 0.3077,
+      "recall": 0.4444
+    },
+    {
+      "label": "because",
+      "support": 11,
+      "predicted": 16,
+      "precision": 0.4375,
+      "recall": 0.6364
+    },
+    {
+      "label": "bed",
+      "support": 10,
+      "predicted": 14,
+      "precision": 0.5714,
+      "recall": 0.8
+    },
+    {
+      "label": "bedroom",
+      "support": 10,
+      "predicted": 9,
+      "precision": 0.6667,
       "recall": 0.6
     },
     {
-      "label": "brother",
-      "support": 16,
+      "label": "bee",
+      "support": 10,
+      "predicted": 6,
+      "precision": 0.5,
+      "recall": 0.3
+    },
+    {
+      "label": "before",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.7778,
+      "recall": 0.6364
+    },
+    {
+      "label": "beside",
+      "support": 11,
+      "predicted": 18,
+      "precision": 0.2778,
+      "recall": 0.4545
+    },
+    {
+      "label": "better",
+      "support": 12,
+      "predicted": 11,
+      "precision": 0.7273,
+      "recall": 0.6667
+    },
+    {
+      "label": "bird",
+      "support": 10,
+      "predicted": 8,
+      "precision": 0.875,
+      "recall": 0.7
+    },
+    {
+      "label": "black",
+      "support": 10,
       "predicted": 9,
       "precision": 0.6667,
-      "recall": 0.375
+      "recall": 0.6
+    },
+    {
+      "label": "blow",
+      "support": 8,
+      "predicted": 7,
+      "precision": 0.7143,
+      "recall": 0.625
+    },
+    {
+      "label": "blue",
+      "support": 9,
+      "predicted": 9,
+      "precision": 0.3333,
+      "recall": 0.3333
+    },
+    {
+      "label": "boat",
+      "support": 12,
+      "predicted": 22,
+      "precision": 0.3182,
+      "recall": 0.5833
+    },
+    {
+      "label": "book",
+      "support": 11,
+      "predicted": 12,
+      "precision": 0.3333,
+      "recall": 0.3636
+    },
+    {
+      "label": "boy",
+      "support": 11,
+      "predicted": 2,
+      "precision": 1.0,
+      "recall": 0.1818
+    },
+    {
+      "label": "brother",
+      "support": 10,
+      "predicted": 8,
+      "precision": 0.5,
+      "recall": 0.4
     },
     {
       "label": "brown",
-      "support": 2,
-      "predicted": 9,
-      "precision": 0.1111,
+      "support": 10,
+      "predicted": 15,
+      "precision": 0.4,
+      "recall": 0.6
+    },
+    {
+      "label": "bug",
+      "support": 11,
+      "predicted": 15,
+      "precision": 0.6,
+      "recall": 0.8182
+    },
+    {
+      "label": "bye",
+      "support": 10,
+      "predicted": 4,
+      "precision": 0.25,
+      "recall": 0.1
+    },
+    {
+      "label": "callonphone",
+      "support": 11,
+      "predicted": 5,
+      "precision": 0.8,
+      "recall": 0.3636
+    },
+    {
+      "label": "can",
+      "support": 10,
+      "predicted": 12,
+      "precision": 0.5,
+      "recall": 0.6
+    },
+    {
+      "label": "car",
+      "support": 11,
+      "predicted": 10,
+      "precision": 0.7,
+      "recall": 0.6364
+    },
+    {
+      "label": "carrot",
+      "support": 10,
+      "predicted": 8,
+      "precision": 0.75,
+      "recall": 0.6
+    },
+    {
+      "label": "cat",
+      "support": 12,
+      "predicted": 6,
+      "precision": 0.6667,
+      "recall": 0.3333
+    },
+    {
+      "label": "cereal",
+      "support": 12,
+      "predicted": 10,
+      "precision": 0.6,
       "recall": 0.5
+    },
+    {
+      "label": "chair",
+      "support": 12,
+      "predicted": 10,
+      "precision": 0.4,
+      "recall": 0.3333
+    },
+    {
+      "label": "cheek",
+      "support": 11,
+      "predicted": 24,
+      "precision": 0.2083,
+      "recall": 0.4545
+    },
+    {
+      "label": "child",
+      "support": 11,
+      "predicted": 11,
+      "precision": 0.6364,
+      "recall": 0.6364
+    },
+    {
+      "label": "chin",
+      "support": 11,
+      "predicted": 12,
+      "precision": 0.0833,
+      "recall": 0.0909
+    },
+    {
+      "label": "chocolate",
+      "support": 10,
+      "predicted": 10,
+      "precision": 0.7,
+      "recall": 0.7
+    },
+    {
+      "label": "clean",
+      "support": 10,
+      "predicted": 11,
+      "precision": 0.4545,
+      "recall": 0.5
+    },
+    {
+      "label": "close",
+      "support": 11,
+      "predicted": 10,
+      "precision": 0.6,
+      "recall": 0.5455
+    },
+    {
+      "label": "closet",
+      "support": 11,
+      "predicted": 19,
+      "precision": 0.4737,
+      "recall": 0.8182
+    },
+    {
+      "label": "cloud",
+      "support": 11,
+      "predicted": 1,
+      "precision": 1.0,
+      "recall": 0.0909
+    },
+    {
+      "label": "clown",
+      "support": 11,
+      "predicted": 6,
+      "precision": 0.8333,
+      "recall": 0.4545
+    },
+    {
+      "label": "cow",
+      "support": 12,
+      "predicted": 13,
+      "precision": 0.8462,
+      "recall": 0.9167
+    },
+    {
+      "label": "cowboy",
+      "support": 12,
+      "predicted": 5,
+      "precision": 1.0,
+      "recall": 0.4167
+    },
+    {
+      "label": "cry",
+      "support": 11,
+      "predicted": 4,
+      "precision": 0.0,
+      "recall": 0.0
+    },
+    {
+      "label": "cut",
+      "support": 12,
+      "predicted": 9,
+      "precision": 0.5556,
+      "recall": 0.4167
+    },
+    {
+      "label": "cute",
+      "support": 12,
+      "predicted": 11,
+      "precision": 0.7273,
+      "recall": 0.6667
+    },
+    {
+      "label": "dad",
+      "support": 11,
+      "predicted": 15,
+      "precision": 0.4667,
+      "recall": 0.6364
+    },
+    {
+      "label": "dance",
+      "support": 10,
+      "predicted": 12,
+      "precision": 0.4167,
+      "recall": 0.5
+    },
+    {
+      "label": "dirty",
+      "support": 12,
+      "predicted": 6,
+      "precision": 0.6667,
+      "recall": 0.3333
+    },
+    {
+      "label": "dog",
+      "support": 12,
+      "predicted": 13,
+      "precision": 0.6154,
+      "recall": 0.6667
+    },
+    {
+      "label": "doll",
+      "support": 12,
+      "predicted": 5,
+      "precision": 0.8,
+      "recall": 0.3333
+    },
+    {
+      "label": "donkey",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.5556,
+      "recall": 0.4545
+    },
+    {
+      "label": "down",
+      "support": 11,
+      "predicted": 15,
+      "precision": 0.6,
+      "recall": 0.8182
+    },
+    {
+      "label": "drawer",
+      "support": 11,
+      "predicted": 14,
+      "precision": 0.7143,
+      "recall": 0.9091
+    },
+    {
+      "label": "drink",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.6667,
+      "recall": 0.5455
+    },
+    {
+      "label": "drop",
+      "support": 12,
+      "predicted": 15,
+      "precision": 0.3333,
+      "recall": 0.4167
+    },
+    {
+      "label": "dry",
+      "support": 12,
+      "predicted": 12,
+      "precision": 0.3333,
+      "recall": 0.3333
+    },
+    {
+      "label": "dryer",
+      "support": 12,
+      "predicted": 13,
+      "precision": 0.3846,
+      "recall": 0.4167
+    },
+    {
+      "label": "duck",
+      "support": 11,
+      "predicted": 10,
+      "precision": 0.7,
+      "recall": 0.6364
+    },
+    {
+      "label": "ear",
+      "support": 12,
+      "predicted": 7,
+      "precision": 1.0,
+      "recall": 0.5833
+    },
+    {
+      "label": "elephant",
+      "support": 10,
+      "predicted": 9,
+      "precision": 0.3333,
+      "recall": 0.3
+    },
+    {
+      "label": "empty",
+      "support": 11,
+      "predicted": 6,
+      "precision": 0.6667,
+      "recall": 0.3636
+    },
+    {
+      "label": "every",
+      "support": 8,
+      "predicted": 5,
+      "precision": 0.6,
+      "recall": 0.375
+    },
+    {
+      "label": "eye",
+      "support": 11,
+      "predicted": 7,
+      "precision": 0.1429,
+      "recall": 0.0909
+    },
+    {
+      "label": "face",
+      "support": 9,
+      "predicted": 3,
+      "precision": 1.0,
+      "recall": 0.3333
+    },
+    {
+      "label": "fall",
+      "support": 11,
+      "predicted": 17,
+      "precision": 0.2941,
+      "recall": 0.4545
+    },
+    {
+      "label": "farm",
+      "support": 11,
+      "predicted": 10,
+      "precision": 0.6,
+      "recall": 0.5455
+    },
+    {
+      "label": "fast",
+      "support": 11,
+      "predicted": 11,
+      "precision": 0.4545,
+      "recall": 0.4545
+    },
+    {
+      "label": "feet",
+      "support": 11,
+      "predicted": 10,
+      "precision": 0.7,
+      "recall": 0.6364
+    },
+    {
+      "label": "find",
+      "support": 12,
+      "predicted": 6,
+      "precision": 1.0,
+      "recall": 0.5
+    },
+    {
+      "label": "fine",
+      "support": 11,
+      "predicted": 20,
+      "precision": 0.35,
+      "recall": 0.6364
+    },
+    {
+      "label": "finger",
+      "support": 12,
+      "predicted": 10,
+      "precision": 0.4,
+      "recall": 0.3333
+    },
+    {
+      "label": "finish",
+      "support": 12,
+      "predicted": 9,
+      "precision": 0.5556,
+      "recall": 0.4167
+    },
+    {
+      "label": "fireman",
+      "support": 11,
+      "predicted": 8,
+      "precision": 0.875,
+      "recall": 0.6364
+    },
+    {
+      "label": "first",
+      "support": 10,
+      "predicted": 13,
+      "precision": 0.5385,
+      "recall": 0.7
+    },
+    {
+      "label": "fish",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.5556,
+      "recall": 0.4545
+    },
+    {
+      "label": "flag",
+      "support": 12,
+      "predicted": 8,
+      "precision": 0.5,
+      "recall": 0.3333
+    },
+    {
+      "label": "flower",
+      "support": 12,
+      "predicted": 10,
+      "precision": 0.5,
+      "recall": 0.4167
+    },
+    {
+      "label": "food",
+      "support": 10,
+      "predicted": 8,
+      "precision": 0.75,
+      "recall": 0.6
+    },
+    {
+      "label": "for",
+      "support": 10,
+      "predicted": 10,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    {
+      "label": "frenchfries",
+      "support": 11,
+      "predicted": 11,
+      "precision": 0.9091,
+      "recall": 0.9091
+    },
+    {
+      "label": "frog",
+      "support": 12,
+      "predicted": 13,
+      "precision": 0.6154,
+      "recall": 0.6667
+    },
+    {
+      "label": "garbage",
+      "support": 12,
+      "predicted": 14,
+      "precision": 0.6429,
+      "recall": 0.75
+    },
+    {
+      "label": "gift",
+      "support": 11,
+      "predicted": 18,
+      "precision": 0.4444,
+      "recall": 0.7273
+    },
+    {
+      "label": "giraffe",
+      "support": 11,
+      "predicted": 8,
+      "precision": 0.5,
+      "recall": 0.3636
+    },
+    {
+      "label": "girl",
+      "support": 12,
+      "predicted": 9,
+      "precision": 0.5556,
+      "recall": 0.4167
+    },
+    {
+      "label": "give",
+      "support": 11,
+      "predicted": 0,
+      "precision": 0.0,
+      "recall": 0.0
+    },
+    {
+      "label": "glasswindow",
+      "support": 12,
+      "predicted": 1,
+      "precision": 0.0,
+      "recall": 0.0
+    },
+    {
+      "label": "go",
+      "support": 11,
+      "predicted": 6,
+      "precision": 0.5,
+      "recall": 0.2727
+    },
+    {
+      "label": "goose",
+      "support": 11,
+      "predicted": 3,
+      "precision": 1.0,
+      "recall": 0.2727
+    },
+    {
+      "label": "grandma",
+      "support": 12,
+      "predicted": 40,
+      "precision": 0.175,
+      "recall": 0.5833
+    },
+    {
+      "label": "grandpa",
+      "support": 12,
+      "predicted": 18,
+      "precision": 0.4444,
+      "recall": 0.6667
+    },
+    {
+      "label": "grass",
+      "support": 12,
+      "predicted": 16,
+      "precision": 0.6875,
+      "recall": 0.9167
+    },
+    {
+      "label": "green",
+      "support": 10,
+      "predicted": 18,
+      "precision": 0.3333,
+      "recall": 0.6
+    },
+    {
+      "label": "gum",
+      "support": 11,
+      "predicted": 6,
+      "precision": 0.8333,
+      "recall": 0.4545
+    },
+    {
+      "label": "hair",
+      "support": 11,
+      "predicted": 12,
+      "precision": 0.5,
+      "recall": 0.5455
+    },
+    {
+      "label": "happy",
+      "support": 9,
+      "predicted": 11,
+      "precision": 0.7273,
+      "recall": 0.8889
+    },
+    {
+      "label": "hat",
+      "support": 9,
+      "predicted": 1,
+      "precision": 1.0,
+      "recall": 0.1111
+    },
+    {
+      "label": "hate",
+      "support": 11,
+      "predicted": 8,
+      "precision": 0.5,
+      "recall": 0.3636
+    },
+    {
+      "label": "have",
+      "support": 12,
+      "predicted": 12,
+      "precision": 0.5,
+      "recall": 0.5
+    },
+    {
+      "label": "haveto",
+      "support": 12,
+      "predicted": 13,
+      "precision": 0.6154,
+      "recall": 0.6667
+    },
+    {
+      "label": "head",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.6667,
+      "recall": 0.5455
+    },
+    {
+      "label": "hear",
+      "support": 11,
+      "predicted": 8,
+      "precision": 0.5,
+      "recall": 0.3636
+    },
+    {
+      "label": "helicopter",
+      "support": 10,
+      "predicted": 10,
+      "precision": 0.6,
+      "recall": 0.6
+    },
+    {
+      "label": "hello",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.3333,
+      "recall": 0.2727
+    },
+    {
+      "label": "hen",
+      "support": 10,
+      "predicted": 20,
+      "precision": 0.4,
+      "recall": 0.8
+    },
+    {
+      "label": "hesheit",
+      "support": 12,
+      "predicted": 4,
+      "precision": 0.25,
+      "recall": 0.0833
+    },
+    {
+      "label": "hide",
+      "support": 12,
+      "predicted": 6,
+      "precision": 0.1667,
+      "recall": 0.0833
+    },
+    {
+      "label": "high",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.8889,
+      "recall": 0.7273
+    },
+    {
+      "label": "home",
+      "support": 12,
+      "predicted": 9,
+      "precision": 0.7778,
+      "recall": 0.5833
+    },
+    {
+      "label": "horse",
+      "support": 12,
+      "predicted": 10,
+      "precision": 0.7,
+      "recall": 0.5833
+    },
+    {
+      "label": "hot",
+      "support": 12,
+      "predicted": 6,
+      "precision": 0.6667,
+      "recall": 0.3333
+    },
+    {
+      "label": "hungry",
+      "support": 9,
+      "predicted": 7,
+      "precision": 0.4286,
+      "recall": 0.3333
+    },
+    {
+      "label": "icecream",
+      "support": 11,
+      "predicted": 10,
+      "precision": 0.5,
+      "recall": 0.4545
+    },
+    {
+      "label": "if",
+      "support": 12,
+      "predicted": 11,
+      "precision": 0.9091,
+      "recall": 0.8333
+    },
+    {
+      "label": "into",
+      "support": 10,
+      "predicted": 10,
+      "precision": 0.2,
+      "recall": 0.2
+    },
+    {
+      "label": "jacket",
+      "support": 10,
+      "predicted": 14,
+      "precision": 0.3571,
+      "recall": 0.5
+    },
+    {
+      "label": "jeans",
+      "support": 12,
+      "predicted": 3,
+      "precision": 1.0,
+      "recall": 0.25
+    },
+    {
+      "label": "jump",
+      "support": 11,
+      "predicted": 5,
+      "precision": 0.2,
+      "recall": 0.0909
+    },
+    {
+      "label": "kiss",
+      "support": 10,
+      "predicted": 14,
+      "precision": 0.5714,
+      "recall": 0.8
+    },
+    {
+      "label": "kitty",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.7778,
+      "recall": 0.6364
+    },
+    {
+      "label": "lamp",
+      "support": 12,
+      "predicted": 8,
+      "precision": 0.75,
+      "recall": 0.5
+    },
+    {
+      "label": "later",
+      "support": 12,
+      "predicted": 10,
+      "precision": 0.7,
+      "recall": 0.5833
+    },
+    {
+      "label": "like",
+      "support": 10,
+      "predicted": 28,
+      "precision": 0.3214,
+      "recall": 0.9
+    },
+    {
+      "label": "lion",
+      "support": 10,
+      "predicted": 6,
+      "precision": 0.6667,
+      "recall": 0.4
+    },
+    {
+      "label": "lips",
+      "support": 10,
+      "predicted": 0,
+      "precision": 0.0,
+      "recall": 0.0
+    },
+    {
+      "label": "listen",
+      "support": 12,
+      "predicted": 17,
+      "precision": 0.4706,
+      "recall": 0.6667
+    },
+    {
+      "label": "look",
+      "support": 10,
+      "predicted": 16,
+      "precision": 0.5,
+      "recall": 0.8
+    },
+    {
+      "label": "loud",
+      "support": 12,
+      "predicted": 16,
+      "precision": 0.5625,
+      "recall": 0.75
+    },
+    {
+      "label": "mad",
+      "support": 11,
+      "predicted": 8,
+      "precision": 0.375,
+      "recall": 0.2727
+    },
+    {
+      "label": "make",
+      "support": 12,
+      "predicted": 12,
+      "precision": 0.3333,
+      "recall": 0.3333
+    },
+    {
+      "label": "man",
+      "support": 12,
+      "predicted": 6,
+      "precision": 1.0,
+      "recall": 0.5
+    },
+    {
+      "label": "many",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.7778,
+      "recall": 0.6364
+    },
+    {
+      "label": "milk",
+      "support": 12,
+      "predicted": 10,
+      "precision": 0.5,
+      "recall": 0.4167
+    },
+    {
+      "label": "minemy",
+      "support": 12,
+      "predicted": 11,
+      "precision": 0.6364,
+      "recall": 0.5833
+    },
+    {
+      "label": "mitten",
+      "support": 11,
+      "predicted": 11,
+      "precision": 0.2727,
+      "recall": 0.2727
+    },
+    {
+      "label": "mom",
+      "support": 12,
+      "predicted": 15,
+      "precision": 0.4,
+      "recall": 0.5
+    },
+    {
+      "label": "moon",
+      "support": 12,
+      "predicted": 10,
+      "precision": 0.8,
+      "recall": 0.6667
+    },
+    {
+      "label": "morning",
+      "support": 10,
+      "predicted": 22,
+      "precision": 0.2727,
+      "recall": 0.6
+    },
+    {
+      "label": "mouse",
+      "support": 11,
+      "predicted": 13,
+      "precision": 0.4615,
+      "recall": 0.5455
+    },
+    {
+      "label": "mouth",
+      "support": 10,
+      "predicted": 17,
+      "precision": 0.1176,
+      "recall": 0.2
+    },
+    {
+      "label": "nap",
+      "support": 12,
+      "predicted": 13,
+      "precision": 0.6923,
+      "recall": 0.75
+    },
+    {
+      "label": "napkin",
+      "support": 9,
+      "predicted": 11,
+      "precision": 0.3636,
+      "recall": 0.4444
+    },
+    {
+      "label": "night",
+      "support": 11,
+      "predicted": 6,
+      "precision": 0.5,
+      "recall": 0.2727
+    },
+    {
+      "label": "no",
+      "support": 10,
+      "predicted": 15,
+      "precision": 0.4,
+      "recall": 0.6
+    },
+    {
+      "label": "noisy",
+      "support": 12,
+      "predicted": 11,
+      "precision": 0.4545,
+      "recall": 0.4167
+    },
+    {
+      "label": "nose",
+      "support": 10,
+      "predicted": 12,
+      "precision": 0.3333,
+      "recall": 0.4
+    },
+    {
+      "label": "not",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.5556,
+      "recall": 0.4545
+    },
+    {
+      "label": "now",
+      "support": 12,
+      "predicted": 17,
+      "precision": 0.5294,
+      "recall": 0.75
+    },
+    {
+      "label": "nuts",
+      "support": 10,
+      "predicted": 5,
+      "precision": 0.6,
+      "recall": 0.3
+    },
+    {
+      "label": "old",
+      "support": 11,
+      "predicted": 27,
+      "precision": 0.1852,
+      "recall": 0.4545
+    },
+    {
+      "label": "on",
+      "support": 9,
+      "predicted": 8,
+      "precision": 0.625,
+      "recall": 0.5556
+    },
+    {
+      "label": "open",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.5556,
+      "recall": 0.4545
+    },
+    {
+      "label": "orange",
+      "support": 11,
+      "predicted": 8,
+      "precision": 0.625,
+      "recall": 0.4545
+    },
+    {
+      "label": "outside",
+      "support": 12,
+      "predicted": 9,
+      "precision": 0.3333,
+      "recall": 0.25
+    },
+    {
+      "label": "owie",
+      "support": 12,
+      "predicted": 11,
+      "precision": 0.6364,
+      "recall": 0.5833
+    },
+    {
+      "label": "owl",
+      "support": 12,
+      "predicted": 18,
+      "precision": 0.6111,
+      "recall": 0.9167
+    },
+    {
+      "label": "pajamas",
+      "support": 12,
+      "predicted": 10,
+      "precision": 1.0,
+      "recall": 0.8333
+    },
+    {
+      "label": "pen",
+      "support": 12,
+      "predicted": 25,
+      "precision": 0.24,
+      "recall": 0.5
+    },
+    {
+      "label": "pencil",
+      "support": 12,
+      "predicted": 17,
+      "precision": 0.3529,
+      "recall": 0.5
+    },
+    {
+      "label": "penny",
+      "support": 9,
+      "predicted": 14,
+      "precision": 0.2857,
+      "recall": 0.4444
+    },
+    {
+      "label": "person",
+      "support": 11,
+      "predicted": 14,
+      "precision": 0.2857,
+      "recall": 0.3636
+    },
+    {
+      "label": "pig",
+      "support": 12,
+      "predicted": 8,
+      "precision": 0.875,
+      "recall": 0.5833
+    },
+    {
+      "label": "pizza",
+      "support": 11,
+      "predicted": 9,
+      "precision": 0.8889,
+      "recall": 0.7273
+    },
+    {
+      "label": "please",
+      "support": 10,
+      "predicted": 9,
+      "precision": 0.5556,
+      "recall": 0.5
+    },
+    {
+      "label": "police",
+      "support": 10,
+      "predicted": 12,
+      "precision": 0.6667,
+      "recall": 0.8
+    },
+    {
+      "label": "pool",
+      "support": 10,
+      "predicted": 16,
+      "precision": 0.25,
+      "recall": 0.4
+    },
+    {
+      "label": "potty",
+      "support": 12,
+      "predicted": 11,
+      "precision": 0.7273,
+      "recall": 0.6667
+    },
+    {
+      "label": "pretend",
+      "support": 12,
+      "predicted": 19,
+      "precision": 0.4211,
+      "recall": 0.6667
+    },
+    {
+      "label": "pretty",
+      "support": 11,
+      "predicted": 12,
+      "precision": 0.25,
+      "recall": 0.2727
+    },
+    {
+      "label": "puppy",
+      "support": 10,
+      "predicted": 5,
+      "precision": 0.8,
+      "recall": 0.4
+    },
+    {
+      "label": "puzzle",
+      "support": 12,
+      "predicted": 5,
+      "precision": 0.8,
+      "recall": 0.3333
+    },
+    {
+      "label": "quiet",
+      "support": 11,
+      "predicted": 17,
+      "precision": 0.3529,
+      "recall": 0.5455
+    },
+    {
+      "label": "radio",
+      "support": 12,
+      "predicted": 4,
+      "precision": 1.0,
+      "recall": 0.3333
+    },
+    {
+      "label": "rain",
+      "support": 12,
+      "predicted": 9,
+      "precision": 0.6667,
+      "recall": 0.5
+    },
+    {
+      "label": "read",
+      "support": 11,
+      "predicted": 6,
+      "precision": 0.5,
+      "recall": 0.2727
+    },
+    {
+      "label": "red",
+      "support": 12,
+      "predicted": 12,
+      "precision": 0.25,
+      "recall": 0.25
+    },
+    {
+      "label": "refrigerator",
+      "support": 12,
+      "predicted": 17,
+      "precision": 0.4706,
+      "recall": 0.6667
+    },
+    {
+      "label": "ride",
+      "support": 10,
+      "predicted": 7,
+      "precision": 0.2857,
+      "recall": 0.2
+    },
+    {
+      "label": "room",
+      "support": 12,
+      "predicted": 15,
+      "precision": 0.6,
+      "recall": 0.75
+    },
+    {
+      "label": "sad",
+      "support": 12,
+      "predicted": 16,
+      "precision": 0.4375,
+      "recall": 0.5833
+    },
+    {
+      "label": "same",
+      "support": 11,
+      "predicted": 10,
+      "precision": 0.3,
+      "recall": 0.2727
+    },
+    {
+      "label": "say",
+      "support": 12,
+      "predicted": 14,
+      "precision": 0.1429,
+      "recall": 0.1667
+    },
+    {
+      "label": "scissors",
+      "support": 12,
+      "predicted": 14,
+      "precision": 0.3571,
+      "recall": 0.4167
+    },
+    {
+      "label": "see",
+      "support": 10,
+      "predicted": 16,
+      "precision": 0.5625,
+      "recall": 0.9
+    },
+    {
+      "label": "shhh",
+      "support": 12,
+      "predicted": 17,
+      "precision": 0.6471,
+      "recall": 0.9167
+    },
+    {
+      "label": "shirt",
+      "support": 11,
+      "predicted": 10,
+      "precision": 0.8,
+      "recall": 0.7273
+    },
+    {
+      "label": "shoe",
+      "support": 11,
+      "predicted": 16,
+      "precision": 0.375,
+      "recall": 0.5455
+    },
+    {
+      "label": "shower",
+      "support": 12,
+      "predicted": 13,
+      "precision": 0.6154,
+      "recall": 0.6667
+    },
+    {
+      "label": "sick",
+      "support": 11,
+      "predicted": 6,
+      "precision": 0.6667,
+      "recall": 0.3636
+    },
+    {
+      "label": "sleep",
+      "support": 12,
+      "predicted": 7,
+      "precision": 0.2857,
+      "recall": 0.1667
+    },
+    {
+      "label": "sleepy",
+      "support": 11,
+      "predicted": 10,
+      "precision": 0.4,
+      "recall": 0.3636
+    },
+    {
+      "label": "smile",
+      "support": 12,
+      "predicted": 6,
+      "precision": 1.0,
+      "recall": 0.5
+    },
+    {
+      "label": "snack",
+      "support": 12,
+      "predicted": 12,
+      "precision": 0.5,
+      "recall": 0.5
+    },
+    {
+      "label": "snow",
+      "support": 10,
+      "predicted": 7,
+      "precision": 0.7143,
+      "recall": 0.5
+    },
+    {
+      "label": "stairs",
+      "support": 10,
+      "predicted": 1,
+      "precision": 1.0,
+      "recall": 0.1
+    },
+    {
+      "label": "stay",
+      "support": 11,
+      "predicted": 19,
+      "precision": 0.3684,
+      "recall": 0.6364
+    },
+    {
+      "label": "sticky",
+      "support": 10,
+      "predicted": 5,
+      "precision": 0.2,
+      "recall": 0.1
+    },
+    {
+      "label": "store",
+      "support": 12,
+      "predicted": 10,
+      "precision": 0.5,
+      "recall": 0.4167
+    },
+    {
+      "label": "story",
+      "support": 11,
+      "predicted": 5,
+      "precision": 0.2,
+      "recall": 0.0909
+    },
+    {
+      "label": "stuck",
+      "support": 10,
+      "predicted": 10,
+      "precision": 0.6,
+      "recall": 0.6
+    },
+    {
+      "label": "sun",
+      "support": 11,
+      "predicted": 12,
+      "precision": 0.75,
+      "recall": 0.8182
+    },
+    {
+      "label": "table",
+      "support": 12,
+      "predicted": 13,
+      "precision": 0.6154,
+      "recall": 0.6667
+    },
+    {
+      "label": "talk",
+      "support": 11,
+      "predicted": 16,
+      "precision": 0.5,
+      "recall": 0.7273
+    },
+    {
+      "label": "taste",
+      "support": 12,
+      "predicted": 15,
+      "precision": 0.6,
+      "recall": 0.75
+    },
+    {
+      "label": "thankyou",
+      "support": 8,
+      "predicted": 14,
+      "precision": 0.4286,
+      "recall": 0.75
+    },
+    {
+      "label": "that",
+      "support": 11,
+      "predicted": 10,
+      "precision": 0.4,
+      "recall": 0.3636
+    },
+    {
+      "label": "there",
+      "support": 12,
+      "predicted": 4,
+      "precision": 1.0,
+      "recall": 0.3333
+    },
+    {
+      "label": "think",
+      "support": 9,
+      "predicted": 13,
+      "precision": 0.3846,
+      "recall": 0.5556
+    },
+    {
+      "label": "thirsty",
+      "support": 11,
+      "predicted": 12,
+      "precision": 0.4167,
+      "recall": 0.4545
+    },
+    {
+      "label": "tiger",
+      "support": 12,
+      "predicted": 13,
+      "precision": 0.6923,
+      "recall": 0.75
+    },
+    {
+      "label": "time",
+      "support": 12,
+      "predicted": 10,
+      "precision": 0.6,
+      "recall": 0.5
+    },
+    {
+      "label": "tomorrow",
+      "support": 10,
+      "predicted": 9,
+      "precision": 0.4444,
+      "recall": 0.4
+    },
+    {
+      "label": "tongue",
+      "support": 11,
+      "predicted": 11,
+      "precision": 0.8182,
+      "recall": 0.8182
+    },
+    {
+      "label": "tooth",
+      "support": 11,
+      "predicted": 1,
+      "precision": 1.0,
+      "recall": 0.0909
+    },
+    {
+      "label": "toothbrush",
+      "support": 11,
+      "predicted": 8,
+      "precision": 0.875,
+      "recall": 0.6364
+    },
+    {
+      "label": "touch",
+      "support": 11,
+      "predicted": 10,
+      "precision": 0.6,
+      "recall": 0.5455
+    },
+    {
+      "label": "toy",
+      "support": 10,
+      "predicted": 9,
+      "precision": 0.2222,
+      "recall": 0.2
+    },
+    {
+      "label": "tree",
+      "support": 10,
+      "predicted": 10,
+      "precision": 0.4,
+      "recall": 0.4
+    },
+    {
+      "label": "uncle",
+      "support": 12,
+      "predicted": 8,
+      "precision": 0.875,
+      "recall": 0.5833
+    },
+    {
+      "label": "underwear",
+      "support": 10,
+      "predicted": 7,
+      "precision": 0.8571,
+      "recall": 0.6
+    },
+    {
+      "label": "up",
+      "support": 12,
+      "predicted": 16,
+      "precision": 0.5,
+      "recall": 0.6667
+    },
+    {
+      "label": "vacuum",
+      "support": 11,
+      "predicted": 17,
+      "precision": 0.4706,
+      "recall": 0.7273
+    },
+    {
+      "label": "wait",
+      "support": 11,
+      "predicted": 12,
+      "precision": 0.1667,
+      "recall": 0.1818
+    },
+    {
+      "label": "wake",
+      "support": 12,
+      "predicted": 20,
+      "precision": 0.4,
+      "recall": 0.6667
+    },
+    {
+      "label": "water",
+      "support": 11,
+      "predicted": 13,
+      "precision": 0.6923,
+      "recall": 0.8182
+    },
+    {
+      "label": "wet",
+      "support": 10,
+      "predicted": 10,
+      "precision": 0.4,
+      "recall": 0.4
+    },
+    {
+      "label": "weus",
+      "support": 12,
+      "predicted": 13,
+      "precision": 0.5385,
+      "recall": 0.5833
+    },
+    {
+      "label": "where",
+      "support": 10,
+      "predicted": 17,
+      "precision": 0.5294,
+      "recall": 0.9
+    },
+    {
+      "label": "white",
+      "support": 10,
+      "predicted": 3,
+      "precision": 0.6667,
+      "recall": 0.2
+    },
+    {
+      "label": "who",
+      "support": 11,
+      "predicted": 18,
+      "precision": 0.4444,
+      "recall": 0.7273
+    },
+    {
+      "label": "why",
+      "support": 12,
+      "predicted": 10,
+      "precision": 0.3,
+      "recall": 0.25
+    },
+    {
+      "label": "will",
+      "support": 7,
+      "predicted": 13,
+      "precision": 0.3077,
+      "recall": 0.5714
+    },
+    {
+      "label": "wolf",
+      "support": 12,
+      "predicted": 11,
+      "precision": 0.7273,
+      "recall": 0.6667
+    },
+    {
+      "label": "yellow",
+      "support": 10,
+      "predicted": 15,
+      "precision": 0.4,
+      "recall": 0.6
+    },
+    {
+      "label": "yes",
+      "support": 10,
+      "predicted": 8,
+      "precision": 0.375,
+      "recall": 0.3
+    },
+    {
+      "label": "yesterday",
+      "support": 10,
+      "predicted": 16,
+      "precision": 0.4375,
+      "recall": 0.7
+    },
+    {
+      "label": "yourself",
+      "support": 11,
+      "predicted": 18,
+      "precision": 0.3889,
+      "recall": 0.6364
+    },
+    {
+      "label": "yucky",
+      "support": 12,
+      "predicted": 17,
+      "precision": 0.4706,
+      "recall": 0.6667
+    },
+    {
+      "label": "zebra",
+      "support": 12,
+      "predicted": 12,
+      "precision": 0.75,
+      "recall": 0.75
+    },
+    {
+      "label": "zipper",
+      "support": 10,
+      "predicted": 15,
+      "precision": 0.4,
+      "recall": 0.6
     }
   ],
-  "testAtEmit": {
-    "threshold": 0.3,
-    "margin": 0.04,
-    "precision": 0.6974,
-    "coverage": 0.7763,
-    "note": "Same gate chosen on validation, scored on untouched test signers."
-  },
-  "validationAtEmit": {
-    "threshold": 0.3,
-    "margin": 0.04,
-    "precision": 0.7447,
-    "coverage": 0.7983,
-    "recall": 0.5945
+  "notIncluded": {
+    "help": "Not one of the 250 PopSign / Google ASL Signs glosses.",
+    "aslCitizen": "Microsoft research license forbids distributing the data or modifications.",
+    "wlasl": "Video rights are research-only and not redistributable."
   }
 }

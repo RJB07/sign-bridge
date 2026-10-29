@@ -34,6 +34,7 @@ export type InterpreterOptions = {
   earlyIntervalMs?: number;
   earlyBoost?: number;
   letterHoldFrames?: number;
+  letterPredict?: (landmarks: Landmark[]) => { label: string; confidence: number } | null;
 };
 
 const DEFAULTS = {
@@ -71,7 +72,10 @@ function handPresent(frame: RawFrame): boolean {
  * (geometric fingerspelling) without committing every frame.
  */
 export class LiveInterpreter {
-  private readonly options: Required<Omit<InterpreterOptions, 'forcedHand'>> & { forcedHand: HandSide | null };
+  private readonly options: Required<Omit<InterpreterOptions, 'forcedHand' | 'letterPredict'>> & {
+    forcedHand: HandSide | null;
+    letterPredict?: InterpreterOptions['letterPredict'];
+  };
   private frames: RawFrame[] = [];
   private segmentStart: number | null = null;
   private lowMotion = 0;
@@ -161,21 +165,21 @@ export class LiveInterpreter {
 
     if (!committed && this.segmentStart === null && present && speed < this.options.stopSpeed) {
       const letter = this.currentLetter(frame);
-      if (letter && letter === this.pendingLetter) this.letterHold += 1;
+      if (letter && letter.label === this.pendingLetter) this.letterHold += 1;
       else {
-        this.pendingLetter = letter;
+        this.pendingLetter = letter?.label ?? null;
         this.letterHold = letter ? 1 : 0;
       }
       if (letter) {
         phase = 'fingerspelling';
-        candidate = letter;
-        confidence = Math.min(0.99, this.letterHold / (this.options.letterHoldFrames + 2));
+        candidate = letter.label;
+        confidence = letter.confidence;
         const ready = this.letterHold >= this.options.letterHoldFrames;
-        const repeat = letter === this.lastLetter && this.letterHold >= this.options.letterHoldFrames * 3;
-        const first = letter !== this.lastLetter && ready;
+        const repeat = letter.label === this.lastLetter && this.letterHold >= this.options.letterHoldFrames * 3;
+        const first = letter.label !== this.lastLetter && ready;
         if (first || repeat) {
-          committed = { text: letter, kind: 'letter', confidence };
-          this.lastLetter = letter;
+          committed = { text: letter.label, kind: 'letter', confidence: letter.confidence };
+          this.lastLetter = letter.label;
           if (repeat) this.letterHold = 0;
         }
       }
@@ -200,12 +204,20 @@ export class LiveInterpreter {
     };
   }
 
-  private currentLetter(frame: RawFrame): string | null {
+  private currentLetter(frame: RawFrame): { label: string; confidence: number } | null {
     const side = this.options.forcedHand === 'Left' ? 'left' : this.options.forcedHand === 'Right' ? 'right' : null;
     const hands = side ? [frame[side]] : [frame.right, frame.left];
     for (const hand of hands) {
+      if (!hand) continue;
+      if (this.options.letterPredict) {
+        const predicted = this.options.letterPredict(hand);
+        if (!predicted) continue;
+        const minimum = predicted.label === 'J' || predicted.label === 'Z' ? 0.75 : 0.55;
+        if (predicted.confidence >= minimum) return predicted;
+        continue;
+      }
       const letter = classifyFingerspelling(hand);
-      if (letter) return letter;
+      if (letter) return { label: letter, confidence: 0.7 };
     }
     return null;
   }

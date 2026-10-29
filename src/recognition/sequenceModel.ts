@@ -7,37 +7,51 @@ export type Prediction = {
   probabilities: number[];
 };
 
-type ModelFile = {
-  featureDim: number;
-  seqLen: number;
-  hidden: number;
-  labels: string[];
-  emitThreshold: number;
-  marginThreshold: number;
+export type WeightBlob = {
   weights: Record<string, string>;
   weightShapes: Record<string, number[]>;
 };
 
 export type SequenceModel = {
+  format: 'signbridge-tx-v1';
   labels: string[];
   emitThreshold: number;
   marginThreshold: number;
-  hidden: number;
   featureDim: number;
   seqLen: number;
-  weights: {
-    conv1Weight: Float32Array;
-    conv1Bias: Float32Array;
-    conv2Weight: Float32Array;
-    conv2Bias: Float32Array;
-    gruWeightIh: Float32Array;
-    gruWeightHh: Float32Array;
-    gruBiasIh: Float32Array;
-    gruBiasHh: Float32Array;
-    fcWeight: Float32Array;
-    fcBias: Float32Array;
-  };
+  dModel: number;
+  heads: number;
+  layers: number;
+  members: WeightBlob[];
 };
+
+type ModelFile = {
+  format?: string;
+  featureDim: number;
+  seqLen: number;
+  dModel: number;
+  heads: number;
+  layers: number;
+  labels: string[];
+  emitThreshold: number;
+  marginThreshold: number;
+  members: WeightBlob[];
+};
+
+const COMPOUNDS: Record<string, string> = {
+  thankyou: 'thank you',
+  callonphone: 'call on phone',
+  frenchfries: 'french fries',
+  glasswindow: 'glass window',
+  haveto: 'have to',
+  icecream: 'ice cream',
+  minemy: 'mine',
+  hesheit: 'he',
+};
+
+export function glossToEnglish(label: string): string {
+  return COMPOUNDS[label] ?? label.replace(/[_]+/g, ' ').trim();
+}
 
 export function decodeF32(encoded: string): Float32Array {
   const binary = atob(encoded);
@@ -46,88 +60,146 @@ export function decodeF32(encoded: string): Float32Array {
   return new Float32Array(bytes.buffer.slice(0));
 }
 
-export function modelFromJson(payload: ModelFile): SequenceModel {
-  const w = payload.weights;
-  return {
-    labels: payload.labels,
-    emitThreshold: payload.emitThreshold,
-    marginThreshold: payload.marginThreshold,
-    hidden: payload.hidden,
-    featureDim: payload.featureDim,
-    seqLen: payload.seqLen,
-    weights: {
-      conv1Weight: decodeF32(w['conv1.weight']),
-      conv1Bias: decodeF32(w['conv1.bias']),
-      conv2Weight: decodeF32(w['conv2.weight']),
-      conv2Bias: decodeF32(w['conv2.bias']),
-      gruWeightIh: decodeF32(w['gru.weight_ih']),
-      gruWeightHh: decodeF32(w['gru.weight_hh']),
-      gruBiasIh: decodeF32(w['gru.bias_ih']),
-      gruBiasHh: decodeF32(w['gru.bias_hh']),
-      fcWeight: decodeF32(w['fc.weight']),
-      fcBias: decodeF32(w['fc.bias']),
-    },
-  };
+function tensor(blob: WeightBlob, name: string): { data: Float32Array; shape: number[] } {
+  return { data: decodeF32(blob.weights[name]), shape: blob.weightShapes[name] };
 }
 
-function reluInto(values: Float32Array): void {
-  for (let i = 0; i < values.length; i++) if (values[i] < 0) values[i] = 0;
-}
-
-function conv1dSame(seq: Float32Array, time: number, channels: number, weight: Float32Array, bias: Float32Array, outChannels: number): Float32Array {
-  const out = new Float32Array(time * outChannels);
-  for (let t = 0; t < time; t++) {
-    for (let oc = 0; oc < outChannels; oc++) {
-      let total = bias[oc];
-      for (let ic = 0; ic < channels; ic++) {
-        const wBase = (oc * channels + ic) * 3;
-        for (let k = 0; k < 3; k++) {
-          const src = t + k - 1;
-          if (src < 0 || src >= time) continue;
-          total += weight[wBase + k] * seq[src * channels + ic];
-        }
-      }
-      out[t * outChannels + oc] = total;
+function linear(x: Float32Array, rows: number, cols: number, weight: Float32Array, bias: Float32Array): Float32Array {
+  const out = new Float32Array(rows * weight.length / cols);
+  const outCols = weight.length / cols;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < outCols; c++) {
+      let sum = bias[c];
+      const wRow = c * cols;
+      const xRow = r * cols;
+      for (let k = 0; k < cols; k++) sum += x[xRow + k] * weight[wRow + k];
+      out[r * outCols + c] = sum;
     }
   }
   return out;
 }
 
-function sigmoid(value: number): number {
-  if (value > 40) return 1;
-  if (value < -40) return 0;
-  return 1 / (1 + Math.exp(-value));
-}
-
-function gruMean(seq: Float32Array, time: number, hidden: number, weightIh: Float32Array, weightHh: Float32Array, biasIh: Float32Array, biasHh: Float32Array): Float32Array {
-  const state = new Float32Array(hidden);
-  const sum = new Float32Array(hidden);
-  const gates = 3 * hidden;
-  for (let t = 0; t < time; t++) {
-    const gx = new Float32Array(gates);
-    const gh = new Float32Array(gates);
-    for (let i = 0; i < gates; i++) {
-      let sx = biasIh[i];
-      let sh = biasHh[i];
-      const row = i * hidden;
-      const xBase = t * hidden;
-      for (let j = 0; j < hidden; j++) {
-        sx += weightIh[row + j] * seq[xBase + j];
-        sh += weightHh[row + j] * state[j];
-      }
-      gx[i] = sx;
-      gh[i] = sh;
+function layerNorm(x: Float32Array, rows: number, cols: number, weight: Float32Array, bias: Float32Array): Float32Array {
+  const out = new Float32Array(x.length);
+  for (let r = 0; r < rows; r++) {
+    let mean = 0;
+    for (let c = 0; c < cols; c++) mean += x[r * cols + c];
+    mean /= cols;
+    let variance = 0;
+    for (let c = 0; c < cols; c++) {
+      const d = x[r * cols + c] - mean;
+      variance += d * d;
     }
-    for (let i = 0; i < hidden; i++) {
-      const r = sigmoid(gx[i] + gh[i]);
-      const z = sigmoid(gx[hidden + i] + gh[hidden + i]);
-      const n = Math.tanh(gx[2 * hidden + i] + r * gh[2 * hidden + i]);
-      state[i] = (1 - z) * n + z * state[i];
-      sum[i] += state[i];
+    variance /= cols;
+    const inv = 1 / Math.sqrt(variance + 1e-5);
+    for (let c = 0; c < cols; c++) {
+      out[r * cols + c] = (x[r * cols + c] - mean) * inv * weight[c] + bias[c];
     }
   }
-  for (let i = 0; i < hidden; i++) sum[i] /= time;
-  return sum;
+  return out;
+}
+
+function mha(x: Float32Array, time: number, dim: number, inW: Float32Array, inB: Float32Array, outW: Float32Array, outB: Float32Array, heads: number): Float32Array {
+  const qkv = linear(x, time, dim, inW, inB);
+  const dHead = dim / heads;
+  const scale = 1 / Math.sqrt(dHead);
+  const mixed = new Float32Array(time * dim);
+  for (let h = 0; h < heads; h++) {
+    const scores = new Float32Array(time * time);
+    for (let i = 0; i < time; i++) {
+      let max = -Infinity;
+      for (let j = 0; j < time; j++) {
+        let dot = 0;
+        for (let k = 0; k < dHead; k++) {
+          const q = qkv[i * dim * 3 + h * dHead + k];
+          const key = qkv[j * dim * 3 + dim + h * dHead + k];
+          dot += q * key;
+        }
+        const value = dot * scale;
+        scores[i * time + j] = value;
+        if (value > max) max = value;
+      }
+      let denom = 0;
+      for (let j = 0; j < time; j++) {
+        const e = Math.exp(scores[i * time + j] - max);
+        scores[i * time + j] = e;
+        denom += e;
+      }
+      for (let j = 0; j < time; j++) scores[i * time + j] /= denom;
+      for (let k = 0; k < dHead; k++) {
+        let sum = 0;
+        for (let j = 0; j < time; j++) {
+          sum += scores[i * time + j] * qkv[j * dim * 3 + 2 * dim + h * dHead + k];
+        }
+        mixed[i * dim + h * dHead + k] = sum;
+      }
+    }
+  }
+  return linear(mixed, time, dim, outW, outB);
+}
+
+export function logitsForMember(sequence: number[][], blob: WeightBlob, dModel: number, heads: number, layers: number): Float32Array {
+  const time = sequence.length;
+  const feat = sequence[0].length;
+  const flat = new Float32Array(time * feat);
+  for (let t = 0; t < time; t++) {
+    for (let d = 0; d < feat; d++) flat[t * feat + d] = sequence[t][d];
+  }
+  const proj = tensor(blob, 'proj.weight');
+  const projB = tensor(blob, 'proj.bias');
+  const pos = tensor(blob, 'pos');
+  let h = linear(flat, time, feat, proj.data, projB.data);
+  for (let t = 0; t < time; t++) {
+    for (let d = 0; d < dModel; d++) h[t * dModel + d] += pos.data[t * dModel + d];
+  }
+  for (let layer = 0; layer < layers; layer++) {
+    const p = `b${layer}`;
+    const ln1 = layerNorm(h, time, dModel, tensor(blob, `${p}.ln1.weight`).data, tensor(blob, `${p}.ln1.bias`).data);
+    const attn = mha(
+      ln1,
+      time,
+      dModel,
+      tensor(blob, `${p}.attn.in_weight`).data,
+      tensor(blob, `${p}.attn.in_bias`).data,
+      tensor(blob, `${p}.attn.out_weight`).data,
+      tensor(blob, `${p}.attn.out_bias`).data,
+      heads,
+    );
+    for (let i = 0; i < h.length; i++) h[i] += attn[i];
+    const ln2 = layerNorm(h, time, dModel, tensor(blob, `${p}.ln2.weight`).data, tensor(blob, `${p}.ln2.bias`).data);
+    const ff1w = tensor(blob, `${p}.ff1.weight`);
+    const ff1b = tensor(blob, `${p}.ff1.bias`);
+    const hidden = linear(ln2, time, dModel, ff1w.data, ff1b.data);
+    for (let i = 0; i < hidden.length; i++) if (hidden[i] < 0) hidden[i] = 0;
+    const ff2 = linear(hidden, time, ff1w.shape[0], tensor(blob, `${p}.ff2.weight`).data, tensor(blob, `${p}.ff2.bias`).data);
+    for (let i = 0; i < h.length; i++) h[i] += ff2[i];
+  }
+  const normed = layerNorm(h, time, dModel, tensor(blob, 'final_ln.weight').data, tensor(blob, 'final_ln.bias').data);
+  const pooled = new Float32Array(dModel);
+  for (let t = 0; t < time; t++) {
+    for (let d = 0; d < dModel; d++) pooled[d] += normed[t * dModel + d];
+  }
+  for (let d = 0; d < dModel; d++) pooled[d] /= time;
+  const fc = tensor(blob, 'fc.weight');
+  return linear(pooled, 1, dModel, fc.data, tensor(blob, 'fc.bias').data);
+}
+
+export function modelFromJson(payload: ModelFile): SequenceModel {
+  if (payload.format && payload.format !== 'signbridge-tx-v1') {
+    throw new Error(`Unsupported model format ${payload.format}`);
+  }
+  return {
+    format: 'signbridge-tx-v1',
+    labels: payload.labels,
+    emitThreshold: payload.emitThreshold,
+    marginThreshold: payload.marginThreshold,
+    featureDim: payload.featureDim,
+    seqLen: payload.seqLen,
+    dModel: payload.dModel,
+    heads: payload.heads,
+    layers: payload.layers,
+    members: payload.members,
+  };
 }
 
 export function logitsForSequence(model: SequenceModel, sequence: number[][]): Float32Array {
@@ -135,40 +207,20 @@ export function logitsForSequence(model: SequenceModel, sequence: number[][]): F
   if (prepared.length !== model.seqLen || prepared[0]?.length !== model.featureDim) {
     throw new Error(`Expected ${model.seqLen}x${model.featureDim} features`);
   }
-  const flat = new Float32Array(model.seqLen * model.featureDim);
-  for (let t = 0; t < model.seqLen; t++) {
-    for (let d = 0; d < model.featureDim; d++) flat[t * model.featureDim + d] = prepared[t][d];
+  const acc = new Float32Array(model.labels.length);
+  for (const member of model.members) {
+    const logits = logitsForMember(prepared, member, model.dModel, model.heads, model.layers);
+    for (let i = 0; i < acc.length; i++) acc[i] += logits[i];
   }
-  const hidden = model.hidden;
-  const h1 = conv1dSame(flat, model.seqLen, FEATURE_DIM, model.weights.conv1Weight, model.weights.conv1Bias, hidden);
-  reluInto(h1);
-  const h2 = conv1dSame(h1, model.seqLen, hidden, model.weights.conv2Weight, model.weights.conv2Bias, hidden);
-  reluInto(h2);
-  const pooled = gruMean(
-    h2,
-    model.seqLen,
-    hidden,
-    model.weights.gruWeightIh,
-    model.weights.gruWeightHh,
-    model.weights.gruBiasIh,
-    model.weights.gruBiasHh,
-  );
-  const classes = model.labels.length;
-  const logits = new Float32Array(classes);
-  for (let c = 0; c < classes; c++) {
-    let total = model.weights.fcBias[c];
-    const row = c * hidden;
-    for (let h = 0; h < hidden; h++) total += model.weights.fcWeight[row + h] * pooled[h];
-    logits[c] = total;
-  }
-  return logits;
+  for (let i = 0; i < acc.length; i++) acc[i] /= model.members.length;
+  return acc;
 }
 
 export function predictSequence(model: SequenceModel, sequence: number[][]): Prediction {
   const logits = logitsForSequence(model, sequence);
   let max = -Infinity;
   for (let i = 0; i < logits.length; i++) if (logits[i] > max) max = logits[i];
-  const probabilities = new Array(logits.length);
+  const probabilities = new Array<number>(logits.length);
   let denom = 0;
   for (let i = 0; i < logits.length; i++) {
     const e = Math.exp(logits[i] - max);
@@ -192,7 +244,5 @@ export function predictSequence(model: SequenceModel, sequence: number[][]): Pre
   };
 }
 
-export function glossToEnglish(label: string): string {
-  const known: Record<string, string> = { callonphone: 'call on phone' };
-  return known[label] ?? label.replace(/[_]+/g, ' ').trim();
-}
+export const MODEL_FEATURE_DIM = FEATURE_DIM;
+export const MODEL_SEQ_LEN = SEQ_LEN;

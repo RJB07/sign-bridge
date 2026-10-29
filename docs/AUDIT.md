@@ -46,7 +46,11 @@ The vocabulary is the glosses that appear in all three partitions of the shards 
 
 Google’s Isolated Sign Language Recognition release is the same PopSign signs already stored as MediaPipe landmarks (CC BY 4.0) but is about 56 GB and requires a Kaggle login. This pipeline uses the public Hugging Face frame release and runs Holistic locally so the browser and the trainer share one landmarker.
 
-100% accuracy is not a realistic target. On the untouched test signers this baseline reaches **59.1% top-1** and **84.3% top-5** across 32 glosses (chance top-1 is 3.1%). At the validation-chosen gate, test precision is 69.7% and the model commits on 77.6% of clips. Per-class numbers are in `training/metrics/asl_en_metrics.json`.
+100% accuracy is not a realistic target. On untouched PopSign test signers the 250-gloss ensemble reaches **50.4% top-1** and **75.7% top-5** (chance 0.4%). The earlier 32-gloss model on this branch was 59.1% top-1; that was an easier decision. At the validation-chosen gate, test precision is 72.6% and the model commits on 56.7% of clips.
+
+Hello, thank you, please, yes, and no are in the 250. Help is not. ASL Citizen and WLASL were not added: ASL Citizen’s license forbids distributing the data or modifications, and WLASL’s videos are research-only. Google’s Kaggle “ASL Signs” release is this same PopSign gloss list.
+
+Fingerspelling A–Z, including J and Z, is trained on `sid220/asl-now-fingerspelling` (MIT). Filename-hash test top-1 is 92.3%. That split is not signer-independent because the files have no participant id.
 
 ## Limits
 

@@ -4,7 +4,7 @@
  * scaled by shoulder width (image x/y) or palm size.
  */
 
-export const FEATURE_DIM = 147;
+export const FEATURE_DIM = 273;
 export const SEQ_LEN = 32;
 export const POSE_INDEXES = [0, 11, 12, 13, 14, 15, 16];
 
@@ -84,23 +84,38 @@ function normalize(points: Landmark[], origin: Landmark, scale: number, mirror: 
   return out;
 }
 
+function pack(points: Landmark[] | null, origin: Landmark, scale: number, mirror: boolean, width: number): number[] {
+  if (!points) return new Array(width).fill(0);
+  const values = normalize(points, origin, scale, mirror);
+  if (values.length === width) return values;
+  const out = new Array(width).fill(0);
+  for (let i = 0; i < Math.min(width, values.length); i++) out[i] = values[i];
+  return out;
+}
+
 export function sequenceFeatures(frames: FeatureFrame[], forced?: HandSide | null): number[][] {
   const dominant = chooseDominant(frames, forced);
   if (!dominant) return [];
   const mirror = dominant === 'Left';
-  const key = dominant === 'Left' ? 'left' : 'right';
+  const domKey = dominant === 'Left' ? 'left' : 'right';
+  const otherKey = dominant === 'Left' ? 'right' : 'left';
   const rows: number[][] = [];
-  let prev: number[] | null = null;
+  let prevDom: number[] | null = null;
+  let prevOther: number[] | null = null;
   for (const frame of frames) {
-    const hand = asPoints(frame[key], 21);
+    const hand = asPoints(frame[domKey], 21);
+    const other = asPoints(frame[otherKey], 21);
     const pose = asPoints(frame.pose, 33);
     const { origin, scale } = originAndScale(hand, pose);
-    const dom = hand ? normalize(hand, origin, scale, mirror) : new Array(63).fill(0);
-    const delta = prev ? dom.map((value, index) => value - prev![index]) : new Array(63).fill(0);
-    prev = dom;
+    const dom = pack(hand, origin, scale, mirror, 63);
+    const nondom = pack(other, origin, scale, mirror, 63);
+    const deltaDom = prevDom ? dom.map((value, index) => value - prevDom![index]) : new Array(63).fill(0);
+    const deltaOther = prevOther ? nondom.map((value, index) => value - prevOther![index]) : new Array(63).fill(0);
+    prevDom = dom;
+    prevOther = nondom;
     const posePoints = pose ? POSE_INDEXES.map((index) => pose[index]) : null;
-    const poseFeat = posePoints ? normalize(posePoints, origin, scale, mirror) : new Array(21).fill(0);
-    rows.push([...dom, ...delta, ...poseFeat]);
+    const poseFeat = pack(posePoints, origin, scale, mirror, 21);
+    rows.push([...dom, ...nondom, ...poseFeat, ...deltaDom, ...deltaOther]);
   }
   return rows;
 }

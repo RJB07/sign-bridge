@@ -106,7 +106,7 @@ def clip_features(landmarker, image_bytes_list) -> np.ndarray:
     return sequence_features(frames)
 
 
-def extract(parquet_dir: Path, selected: list[dict], out_dir: Path, model_path: Path) -> list[dict]:
+def extract(parquet_dir: Path, selected: list[dict], out_dir: Path, model_path: Path, prefix: str = "") -> list[dict]:
     out_dir.mkdir(parents=True, exist_ok=True)
     seq_dir = out_dir / "seq"
     seq_dir.mkdir(exist_ok=True)
@@ -119,36 +119,48 @@ def extract(parquet_dir: Path, selected: list[dict], out_dir: Path, model_path: 
     try:
         for name, rows in sorted(by_file.items()):
             path = parquet_dir / name
-            print(f"extract {name} ({len(rows)} clips)")
+            print(f"[{prefix or 'main'}] extract {name} ({len(rows)} clips)", flush=True)
             table = pq.ParquetFile(path).read(columns=["images"])
             images = table.column("images")
             for record in rows:
                 feats = clip_features(landmarker, images[record["row"]].as_py())
                 if feats.shape[0] < 2:
                     continue
-                npy_name = f"{record['split']}_{len(written):05d}.npy"
+                npy_name = f"{prefix}{record['split']}_{len(written):05d}.npy"
                 np.save(seq_dir / npy_name, feats)
-                saved = {
-                    "split": record["split"],
-                    "label": record["label"],
-                    "signer": record["signer"],
-                    "npy": npy_name,
-                    "frames": int(feats.shape[0]),
-                    "source": record["source"],
-                }
-                written.append(saved)
-                if len(written) % 100 == 0:
-                    print(f"  saved {len(written)}")
+                written.append(
+                    {
+                        "split": record["split"],
+                        "label": record["label"],
+                        "signer": record["signer"],
+                        "npy": npy_name,
+                        "frames": int(feats.shape[0]),
+                        "source": record["source"],
+                    }
+                )
+                if len(written) % 200 == 0:
+                    print(f"[{prefix or 'main'}] saved {len(written)}", flush=True)
             del table
             del images
     finally:
         landmarker.close()
-    index_path = out_dir / "index.jsonl"
+    index_path = out_dir / f"index{prefix}.jsonl"
     with index_path.open("w", encoding="utf-8") as handle:
         for row in written:
             handle.write(json.dumps(row) + "\n")
-    print(f"wrote {len(written)} sequences -> {index_path}")
+    print(f"[{prefix or 'main'}] wrote {len(written)} -> {index_path}", flush=True)
     return written
+
+
+def _extract_worker(payload: dict) -> str:
+    extract(
+        Path(payload["parquet_dir"]),
+        payload["selected"],
+        Path(payload["out"]),
+        Path(payload["model"]),
+        prefix=payload["prefix"],
+    )
+    return payload["prefix"]
 
 
 def main() -> None:
@@ -159,6 +171,7 @@ def main() -> None:
     parser.add_argument("--max-train", type=int, default=64)
     parser.add_argument("--max-val", type=int, default=20)
     parser.add_argument("--max-test", type=int, default=20)
+    parser.add_argument("--workers", type=int, default=2)
     args = parser.parse_args()
 
     parquet_dir = Path(args.parquet_dir)
@@ -186,7 +199,42 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "selection_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps({"labels": len(labels), "counts": summary["counts"], "leakage": summary["leakage"]}, indent=2))
-    extract(parquet_dir, selected, out_dir, model_path)
+    files = sorted({row["parquet"] for row in selected})
+    workers = max(1, args.workers)
+    if workers == 1:
+        extract(parquet_dir, selected, out_dir, model_path)
+        return
+    import multiprocessing as mp
+
+    groups = [files[i::workers] for i in range(workers)]
+    ctx = mp.get_context("spawn")
+    processes = []
+    for index, group in enumerate(groups):
+        group_set = set(group)
+        payload = {
+            "parquet_dir": str(parquet_dir),
+            "selected": [row for row in selected if row["parquet"] in group_set],
+            "out": str(out_dir),
+            "model": str(model_path),
+            "prefix": f"w{index}_",
+        }
+        process = ctx.Process(target=_extract_worker, args=(payload,))
+        process.start()
+        processes.append(process)
+    for process in processes:
+        process.join()
+        if process.exitcode != 0:
+            raise SystemExit(f"worker failed with {process.exitcode}")
+    merged = []
+    for index in range(workers):
+        part = out_dir / f"indexw{index}_.jsonl"
+        if part.exists():
+            merged.extend(json.loads(line) for line in part.read_text().splitlines() if line.strip())
+    index_path = out_dir / "index.jsonl"
+    with index_path.open("w", encoding="utf-8") as handle:
+        for row in merged:
+            handle.write(json.dumps(row) + "\n")
+    print(f"wrote {len(merged)} sequences -> {index_path}", flush=True)
 
 
 if __name__ == "__main__":

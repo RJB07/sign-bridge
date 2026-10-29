@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-FEATURE_DIM = 147
+FEATURE_DIM = 273
 SEQ_LEN = 32
 POSE_INDEXES = (0, 11, 12, 13, 14, 15, 16)
 
@@ -82,33 +82,43 @@ def _normalize(points: np.ndarray, origin: np.ndarray, scale: float, mirror: boo
     return rel.astype(np.float32)
 
 
+def _pack(points: np.ndarray | None, origin: np.ndarray, scale: float, mirror: bool, width: int) -> np.ndarray:
+    if points is None:
+        return np.zeros(width, dtype=np.float32)
+    return _normalize(points, origin, scale, mirror).reshape(-1).astype(np.float32)
+
+
 def sequence_features(frames: list[dict], forced: str | None = None) -> np.ndarray:
-    """Return (T, 147) features. Empty input or no hands yields shape (0, 147)."""
+    """Both hands plus arm pose, mirrored so the moving hand is on the right.
+
+    Layout per frame: dominant hand, other hand, 7 pose points, dominant delta,
+    other-hand delta. Missing hands are zeros. Shape is (T, 273).
+    """
     dominant = choose_dominant(frames, forced)
     if dominant is None:
         return np.zeros((0, FEATURE_DIM), dtype=np.float32)
     mirror = dominant == "Left"
-    key = "left" if dominant == "Left" else "right"
+    dom_key = "left" if dominant == "Left" else "right"
+    other_key = "right" if dominant == "Left" else "left"
     rows = []
-    prev = None
+    prev_dom = None
+    prev_other = None
     for fr in frames:
-        hand = _as_points(fr.get(key), 21)
+        hand = _as_points(fr.get(dom_key), 21)
+        other = _as_points(fr.get(other_key), 21)
         pose = _as_points(fr.get("pose"), 33)
         origin, scale = _origin_and_scale(hand, pose)
-        if hand is None:
-            dom = np.zeros(63, dtype=np.float32)
-        else:
-            dom = _normalize(hand, origin, scale, mirror).reshape(-1)
-        delta = np.zeros(63, dtype=np.float32) if prev is None else (dom - prev)
-        prev = dom
+        dom = _pack(hand, origin, scale, mirror, 63)
+        nondom = _pack(other, origin, scale, mirror, 63)
+        delta_dom = np.zeros(63, dtype=np.float32) if prev_dom is None else (dom - prev_dom)
+        delta_other = np.zeros(63, dtype=np.float32) if prev_other is None else (nondom - prev_other)
+        prev_dom = dom
+        prev_other = nondom
         if pose is None:
             pose_f = np.zeros(21, dtype=np.float32)
         else:
-            selected = pose[list(POSE_INDEXES)]
-            pose_f = _normalize(selected, origin, scale, mirror).reshape(-1)
-        rows.append(np.concatenate([dom, delta, pose_f]).astype(np.float32))
-    if not rows:
-        return np.zeros((0, FEATURE_DIM), dtype=np.float32)
+            pose_f = _pack(pose[list(POSE_INDEXES)], origin, scale, mirror, 21)
+        rows.append(np.concatenate([dom, nondom, pose_f, delta_dom, delta_other]).astype(np.float32))
     return np.stack(rows).astype(np.float32)
 
 
@@ -130,10 +140,13 @@ def resample_sequence(seq: np.ndarray, length: int = SEQ_LEN) -> np.ndarray:
 
 def augment_sequence(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     seq = np.array(seq, dtype=np.float32, copy=True)
-    if seq.shape[0] > 5 and rng.random() < 0.5:
+    if seq.shape[0] > 4 and rng.random() < 0.8:
+        short = int(rng.integers(max(3, int(seq.shape[0] * 0.65)), seq.shape[0] + 1))
+        seq = resample_sequence(seq, short)
+    if seq.shape[0] > 6 and rng.random() < 0.5:
         drop = int(rng.integers(0, seq.shape[0]))
         seq = np.delete(seq, drop, axis=0)
-    angle = float(rng.uniform(-0.2, 0.2))
+    angle = float(rng.uniform(-0.25, 0.25))
     c, s = np.cos(angle), np.sin(angle)
     flat = seq.reshape(seq.shape[0], -1, 3)
     x = flat[:, :, 0].copy()

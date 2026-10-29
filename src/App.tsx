@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ASL_ENGLISH_PACK } from './languages/aslEnglish';
 import { LiveInterpreter, type LiveSnapshot } from './recognition/liveInterpreter';
+import { letterModelFromJson, predictLetter } from './recognition/letterModel';
 import { decodeF32, glossToEnglish, modelFromJson, predictSequence, type SequenceModel } from './recognition/sequenceModel';
 import { exportDatasetJSON, parseImportedDatasetJSON, type SignDataset } from './signModel';
 import { loadSavedDataset, saveDataset } from './storage';
@@ -30,6 +31,8 @@ function App() {
   const interpreterRef = useRef<LiveInterpreter | null>(null);
   const demoClipsRef = useRef<DemoClip[]>([]);
   const demoIndexRef = useRef(0);
+  const featureDimRef = useRef(273);
+  const letterPredictRef = useRef<((landmarks: import('./recognition/features').Landmark[]) => { label: string; confidence: number } | null) | null>(null);
   const uiStampRef = useRef(0);
 
   const [fps, setFps] = useState(0);
@@ -96,15 +99,23 @@ function App() {
     let cancelled = false;
     const load = async () => {
       try {
-        const [modelResponse, demoResponse] = await Promise.all([
+        const [modelResponse, demoResponse, letterResponse] = await Promise.all([
           fetch(ASL_ENGLISH_PACK.modelUrl),
           fetch('/models/demo-clips.json'),
+          fetch('/models/asl-fingerspelling.json'),
         ]);
         if (!modelResponse.ok) throw new Error(`model HTTP ${modelResponse.status}`);
         const payload = await modelResponse.json();
         const model = modelFromJson(payload);
         if (cancelled) return;
-        interpreterRef.current = new LiveInterpreter(classifierFor(model));
+        featureDimRef.current = model.featureDim;
+        if (letterResponse.ok) {
+          const letters = letterModelFromJson(await letterResponse.json());
+          letterPredictRef.current = (hand) => predictLetter(letters, hand);
+        }
+        interpreterRef.current = new LiveInterpreter(classifierFor(model), {
+          letterPredict: (hand) => letterPredictRef.current?.(hand) ?? null,
+        });
         setModelLabels(model.labels.map(glossToEnglish));
         if (payload.metrics) {
           const metrics = payload.metrics;
@@ -189,9 +200,10 @@ function App() {
     const clip = clips[demoIndexRef.current % clips.length];
     demoIndexRef.current += 1;
     const flat = decodeF32(clip.features);
+    const dim = featureDimRef.current;
     const sequence: number[][] = [];
-    for (let t = 0; t < flat.length / 147; t++) {
-      sequence.push(Array.from(flat.slice(t * 147, (t + 1) * 147)));
+    for (let t = 0; t < flat.length / dim; t++) {
+      sequence.push(Array.from(flat.slice(t * dim, (t + 1) * dim)));
     }
     const result = interpreter.classifyPrepared(sequence);
     setPredictedSign(result.label);
