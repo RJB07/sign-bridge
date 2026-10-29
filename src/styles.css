@@ -15,7 +15,7 @@
   
   --color-text-main: #171717;
   --color-text-muted: #4a4a4a;
-  --color-text-dim: #7a7a7a;
+  --color-text-dim: #3d3d3d;
   --color-text-white: #ffffff;
   
   --radius-lg: 16px;
@@ -44,6 +44,7 @@ html,
   min-height: 100vh;
   position: relative;
   overflow-x: hidden;
+  color: var(--color-text-main);
   background-color: var(--color-bg);
   background-image: 
     linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
@@ -118,7 +119,7 @@ html,
 
 .tts-toggle-btn {
   padding: 4px 10px;
-  background: #ffffff;
+  background: var(--color-card);
   border: 1px solid var(--color-card-border);
   color: var(--color-text-main);
   font-family: var(--font-mono);
@@ -129,14 +130,15 @@ html,
 
 .status-pill {
   padding: 4px 12px;
-  background: #ffffff;
+  background: var(--color-card);
   border: 1px solid var(--color-card-border);
   color: var(--color-text-main);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.95rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
+  min-height: 44px;
 }
 
 .status-pill.highlight {
@@ -456,7 +458,7 @@ html,
   display: flex;
   flex-direction: column;
   gap: 12px;
-  background: #ffffff;
+  background: var(--color-card);
   border-bottom: 1px solid var(--color-card-border);
 }
 
@@ -578,14 +580,20 @@ html,
 
 .status-pill-btn {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.95rem;
   font-weight: 700;
-  padding: 4px 10px;
+  min-height: 44px;
+  padding: 6px 12px;
   background: var(--color-card);
-  border: 1px solid var(--color-card-border);
+  border: 2px solid var(--color-text-main);
   color: var(--color-text-main);
   cursor: pointer;
-  transition: all 0.2s ease;
+}
+.app-shell[data-theme="contrast"] .status-pill,
+.app-shell[data-theme="contrast"] .status-pill-btn {
+  background: #000000;
+  color: #ffe600;
+  border-color: #ffe600;
 }
 
 .status-pill-btn:hover {
@@ -612,9 +620,15 @@ html,
 .chat-msg-rule {
   font-family: var(--font-mono);
   font-size: 0.7rem;
-  color: #6b7280;
+  color: var(--color-text-muted);
   margin-top: 4px;
   font-style: italic;
+}
+.privacy-note {
+  max-width: 70ch;
+  margin: 8px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.95rem;
 }
 
 @media (max-width: 960px) {
@@ -632,6 +646,13 @@ html,
   }
 }
 
+.app-shell {
+  --focus: #111111;
+}
+.app-shell[data-theme="dark"],
+.app-shell[data-theme="contrast"] {
+  --focus: #ffe600;
+}
 :focus-visible {
   outline: 3px solid var(--focus, #111111);
   outline-offset: 2px;
@@ -997,7 +1018,10 @@ html,
   margin-top: 12px;
 }
 .dict-search-input {
-  flex: 1 1 200px;
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 420px;
+  height: 48px;
   min-height: 44px;
   font: inherit;
   padding: 8px 12px;

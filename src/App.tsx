@@ -4,12 +4,9 @@ import { LiveInterpreter, type LiveSnapshot } from './recognition/liveInterprete
 import { assessFrame } from './recognition/frameQuality';
 import { letterModelFromJson, predictLetter } from './recognition/letterModel';
 import { decodeF32, glossToEnglish, modelFromJson, predictSequence, type Prediction, type SequenceModel } from './recognition/sequenceModel';
-import { exportDatasetJSON, parseImportedDatasetJSON, type SignDataset } from './dataset';
-import { loadSavedDataset, saveDataset } from './storage';
 import {
   applyPersonalLabel,
   loadPersonalSamples,
-  matchPersonal,
   persistPersonalSamples,
   sampleFromSequence,
   type PersonalSample,
@@ -30,9 +27,9 @@ function classifierFor(
   onPersonal: (active: boolean) => void,
 ) {
   const withPersonal = (sequence: number[][], prediction: Prediction) => {
-    const hit = matchPersonal(personal(), sequence);
-    onPersonal(Boolean(hit));
-    return applyPersonalLabel(prediction, sequence, personal());
+    const next = applyPersonalLabel(prediction, sequence, personal());
+    onPersonal(next !== prediction);
+    return next;
   };
   return {
     labels: model.labels,
@@ -50,7 +47,6 @@ function classifierFor(
 function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const assemblerRef = useRef<SignTextAssembler | null>(null);
   const hearingRef = useRef<HearingChannel | null>(null);
@@ -111,7 +107,7 @@ function App() {
   const [interimHearingText, setInterimHearingText] = useState('');
   const [typedReplyText, setTypedReplyText] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [dataset, setDataset] = useState<SignDataset>(() => loadSavedDataset());
+  const [sttNote, setSttNote] = useState('');
   const [personalSamples, setPersonalSamples] = useState<PersonalSample[]>(() => loadPersonalSamples());
   const [personalLabel, setPersonalLabel] = useState('');
   const [personalMessage, setPersonalMessage] = useState('Sign or replay a sample, then save it here.');
@@ -246,7 +242,18 @@ function App() {
         applySnapshot(snap);
       }
     };
-    const tracker = new MediaPipeTracker(videoRef.current, canvasRef.current, onFrame, setTrackingStatus);
+    const tracker = new MediaPipeTracker(videoRef.current, canvasRef.current, onFrame, (status) => {
+      setTrackingStatus((prev) => (
+        prev.cameraActive === status.cameraActive
+        && prev.permissionGranted === status.permissionGranted
+        && prev.handsCount === status.handsCount
+        && prev.poseDetected === status.poseDetected
+        && prev.message === status.message
+        && prev.errorCode === status.errorCode
+          ? prev
+          : status
+      ));
+    });
     tracker.start();
     return () => tracker.stop();
   }, []);
@@ -433,8 +440,8 @@ function App() {
             </div>
           </div>
           <div className="video-frame mirror-view">
-            <video ref={videoRef} className="video" autoPlay playsInline muted />
-            <canvas ref={canvasRef} className="video" />
+            <video ref={videoRef} className="video" autoPlay playsInline muted aria-hidden="true" />
+            <canvas ref={canvasRef} className="video" aria-hidden="true" />
           </div>
           <div className="video-footer">
             <div>{trackingStatus.message}</div>
@@ -448,10 +455,26 @@ function App() {
             {hearingNow || 'Type, or turn on speech-to-text. Their reply shows here.'}
           </div>
           <div className="caption-actions">
-            <button type="button" className={isMicListening ? 'is-on' : ''} aria-pressed={isMicListening} onClick={() => hearingRef.current?.toggleMicrophone()}>
+            <button
+              type="button"
+              className={isMicListening ? 'is-on' : ''}
+              aria-pressed={isMicListening}
+              aria-describedby="stt-note"
+              onClick={() => {
+                const result = hearingRef.current?.toggleMicrophone();
+                if (result === 'on') {
+                  setSttNote('Microphone audio goes to your browser’s speech service, not to SignBridge. The camera stays on this device.');
+                } else if (result === 'unsupported') {
+                  setSttNote('Speech to text is not available in this browser. Type instead. The camera stays on this device.');
+                } else {
+                  setSttNote('');
+                }
+              }}
+            >
               {isMicListening ? 'Listening…' : 'Speech to text'}
             </button>
           </div>
+          <p id="stt-note" className="privacy-note">{sttNote || 'Speech to text is off. The camera is never uploaded.'}</p>
           <form
             className="typed-reply-form"
             onSubmit={(event) => {
@@ -547,8 +570,6 @@ function App() {
         <div className="dict-controls">
           <label className="sr-only" htmlFor="gloss-search">Search glosses</label>
           <input id="gloss-search" className="dict-search-input" type="search" placeholder="Search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
-          <button type="button" onClick={() => dataset.length && exportDatasetJSON(dataset)}>Export samples</button>
-          <button type="button" onClick={() => fileInputRef.current?.click()}>Import samples</button>
         </div>
         <ul className="gloss-list">
           {filtered.map((label) => (
@@ -556,26 +577,7 @@ function App() {
           ))}
         </ul>
       </details>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".json"
-        className="sr-only"
-        aria-label="Import dataset JSON"
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (!file) return;
-          const reader = new FileReader();
-          reader.onload = () => {
-            const imported = parseImportedDatasetJSON(String(reader.result ?? ''));
-            if (imported.length === 0) return;
-            const merged = [...dataset, ...imported];
-            setDataset(merged);
-            saveDataset(merged);
-          };
-          reader.readAsText(file);
-        }}
-      />
+      <p className="privacy-note">Camera video stays on this device and is not uploaded. Saved signs are landmark numbers in this browser only.</p>
     </div>
   );
 }

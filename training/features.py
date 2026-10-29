@@ -26,7 +26,10 @@ def _as_points(value, expected: int | None) -> np.ndarray | None:
         return None
     if expected is not None and arr.shape[0] < expected:
         return None
-    return arr[:, :3]
+    arr = arr[:, :3]
+    if not np.isfinite(arr).all():
+        return None
+    return arr
 
 
 def choose_dominant(frames: list[dict], forced: str | None = None) -> str | None:

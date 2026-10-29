@@ -53,7 +53,7 @@ export class MediaPipeTracker {
       const fileset = await FilesetResolver.forVisionTasks(publicUrl('/vendor/mediapipe'));
       this.landmarker = await HolisticLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: HOLISTIC_MODEL },
-        runningMode: 'IMAGE',
+        runningMode: 'VIDEO',
         outputFaceBlendshapes: false,
         outputPoseSegmentationMasks: false,
         minHandLandmarksConfidence: 0.35,
@@ -110,7 +110,7 @@ export class MediaPipeTracker {
     this.lastDetect = now;
     let result: HolisticLandmarkerResult;
     try {
-      result = this.landmarker.detect(this.video);
+      result = this.landmarker.detectForVideo(this.video, now);
     } catch {
       return;
     }
@@ -152,18 +152,8 @@ export class MediaPipeTracker {
     const width = this.canvas.width;
     const height = this.canvas.height;
     ctx.clearRect(0, 0, width, height);
-    ctx.drawImage(this.video, 0, 0, width, height);
     const pose = result.poseLandmarks?.[0];
-    if (pose) this.stroke(ctx, pose, POSE_CONNECTIONS, 'rgba(255,255,255,0.8)', 3);
-    const face = result.faceLandmarks?.[0];
-    if (face) {
-      ctx.fillStyle = 'rgba(37, 244, 238, 0.7)';
-      for (let i = 0; i < face.length; i += 16) {
-        ctx.beginPath();
-        ctx.arc(face[i].x * width, face[i].y * height, 1.4, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
+    if (pose) this.stroke(ctx, pose, POSE_CONNECTIONS, 'rgba(255,255,255,0.85)', 3);
     this.drawHand(ctx, result.leftHandLandmarks?.[0], 'L');
     this.drawHand(ctx, result.rightHandLandmarks?.[0], 'R');
   }

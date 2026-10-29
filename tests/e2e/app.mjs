@@ -1,6 +1,10 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { existsSync, readFileSync } from 'node:fs';
 import puppeteer from 'puppeteer-core';
+
+const require = createRequire(import.meta.url);
+const axeSource = readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 
 const chromeCandidates = [
   process.env.CHROME_PATH,
@@ -18,13 +22,17 @@ if (!existsSync('dist/sw.js') || !existsSync('dist/index.html')) {
   process.exit(1);
 }
 
-const port = Number(process.env.E2E_PORT || 4187);
+const port = Number(process.env.E2E_PORT || 4311);
 const server = spawn(
   'npx',
   ['vite', 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
-  { stdio: ['ignore', 'pipe', 'pipe'] },
+  { detached: true, stdio: ['ignore', 'pipe', 'pipe'] },
 );
 let serverLog = '';
+let serverDied = false;
+server.on('exit', () => {
+  serverDied = true;
+});
 server.stdout.on('data', (chunk) => {
   serverLog += chunk.toString();
 });
@@ -45,6 +53,7 @@ async function waitForServer() {
     } catch {
       /* preview is still starting */
     }
+    if (serverDied || serverLog.includes('already in use')) break;
     await delay(250);
   }
   throw new Error(`Preview did not start.\n${serverLog}`);
@@ -52,6 +61,20 @@ async function waitForServer() {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+async function expectNoSeriousAxeViolations(page, label) {
+  await page.addScriptTag({ content: axeSource });
+  const violations = await page.evaluate(async () => {
+    const outcome = await window.axe.run(document, { resultTypes: ['violations'] });
+    return outcome.violations
+      .filter((item) => item.impact === 'serious' || item.impact === 'critical')
+      .map((item) => {
+        const where = item.nodes.slice(0, 4).map((node) => `${node.target.join(' ')} :: ${(node.html || '').slice(0, 140)}`).join(' | ');
+        return `${item.id} (${item.nodes.length}): ${where}`;
+      });
+  });
+  assert(violations.length === 0, `axe ${label}: ${violations.join('; ')}`);
 }
 
 const browser = await puppeteer.launch({
@@ -76,12 +99,14 @@ try {
     return button?.textContent ?? '';
   });
   assert(speechText.includes('off'), `Speech should start off, saw "${speechText}"`);
+  await expectNoSeriousAxeViolations(page, 'light');
 
   await page.evaluate(() => {
     const button = [...document.querySelectorAll('button')].find((node) => node.textContent?.trim() === 'Contrast');
     button?.click();
   });
   await page.waitForSelector('[data-theme="contrast"]');
+  await expectNoSeriousAxeViolations(page, 'contrast');
 
   await page.click('#replay-held-out');
   await page.waitForSelector('.caption-word');
@@ -127,7 +152,11 @@ try {
   console.error(serverLog);
   process.exitCode = 1;
 } finally {
-  server.kill('SIGTERM');
+  try {
+    process.kill(-server.pid, 'SIGTERM');
+  } catch {
+    server.kill('SIGTERM');
+  }
   browser.close().catch(() => {});
   setTimeout(() => process.exit(process.exitCode ?? 0), 500);
 }

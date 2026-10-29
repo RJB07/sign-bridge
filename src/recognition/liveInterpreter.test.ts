@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Landmark } from './features';
-import { LiveInterpreter, type GlossClassifier, type RawFrame } from './liveInterpreter';
+import { LiveInterpreter, type GlossClassifier, type LiveSnapshot, type RawFrame } from './liveInterpreter';
 
 function handAt(x: number): Landmark[] {
   return Array.from({ length: 21 }, (_, index) => ({ x: x + index * 0.001, y: 0.2, z: 0 }));
@@ -85,5 +85,70 @@ describe('live interpreter', () => {
     }
     expect(preview).toBeGreaterThan(0);
     expect(committed).toBe('book');
+  });
+
+  it('commits when the hand leaves and ignores a non-numeric wrist', () => {
+    const interpreter = new LiveInterpreter(classifier(0.95), {
+      startSpeed: 0.01,
+      stopSpeed: 0.004,
+      minFrames: 4,
+      earlyIntervalMs: 0,
+      earlyBoost: 0.5,
+      stopFrames: 30,
+    });
+    let text: string | null = null;
+    for (let i = 0; i < 6; i++) {
+      const snap = interpreter.push(frame(i * 40, i * 0.05));
+      if (snap.committed) text = snap.committed.text;
+    }
+    expect(text).toBeNull();
+    for (let i = 6; i < 12; i++) {
+      const snap = interpreter.push({ timeMs: i * 40, left: null, right: null, pose: null });
+      if (snap.committed) text = snap.committed.text;
+    }
+    expect(text).toBe('apple');
+
+    const bad = frame(0, 0.2);
+    bad.right![0] = { x: Number.NaN, y: 0.2, z: 0 };
+    expect(interpreter.push(bad).phase).toBe('idle');
+  });
+
+  it('closes a segment that never becomes still', () => {
+    const interpreter = new LiveInterpreter(classifier(0.2), {
+      startSpeed: 0.01,
+      stopSpeed: 0.004,
+      minFrames: 3,
+      earlyIntervalMs: 100000,
+      stopFrames: 100,
+      maxSegmentFrames: 8,
+    });
+    let phase: LiveSnapshot['phase'] = 'idle';
+    for (let i = 0; i < 12; i++) phase = interpreter.push(frame(i * 40, i * 0.05)).phase;
+    expect(phase).toBe('idle');
+  });
+
+  it('does not fingerspell in the moment after a gloss', () => {
+    const texts: string[] = [];
+    const interpreter = new LiveInterpreter(classifier(0.95), {
+      startSpeed: 0.01,
+      stopSpeed: 0.004,
+      minFrames: 3,
+      earlyIntervalMs: 0,
+      earlyBoost: 0,
+      stopFrames: 2,
+      letterHoldFrames: 2,
+      letterCooldownMs: 500,
+      letterPredict: () => ({ label: 'A', confidence: 0.99 }),
+    });
+    for (let i = 0; i < 6; i++) {
+      const snap = interpreter.push(frame(i * 40, i * 0.05));
+      if (snap.committed) texts.push(snap.committed.text);
+    }
+    for (let i = 6; i < 10; i++) {
+      const snap = interpreter.push(frame(i * 40, 0.25));
+      if (snap.committed) texts.push(snap.committed.text);
+    }
+    expect(texts).toContain('apple');
+    expect(texts).not.toContain('A');
   });
 });

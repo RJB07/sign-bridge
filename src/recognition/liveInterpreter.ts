@@ -37,6 +37,9 @@ export type InterpreterOptions = {
   earlyIntervalMs?: number;
   earlyBoost?: number;
   letterHoldFrames?: number;
+  letterCooldownMs?: number;
+  maxSegmentFrames?: number;
+  previewIntervalMs?: number;
   letterPredict?: (landmarks: Landmark[]) => { label: string; confidence: number } | null;
 };
 
@@ -48,11 +51,16 @@ const DEFAULTS = {
   earlyIntervalMs: 220,
   earlyBoost: 0.12,
   letterHoldFrames: 8,
+  letterCooldownMs: 450,
+  maxSegmentFrames: 75,
+  previewIntervalMs: 120,
 };
 
 function wrist(frame: RawFrame, side: 'left' | 'right'): Landmark | null {
   const hand = frame[side];
-  return hand && hand.length >= 21 ? hand[0] : null;
+  const point = hand && hand.length >= 21 ? hand[0] : null;
+  if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  return point;
 }
 
 function speedBetween(prev: RawFrame, cur: RawFrame): number {
@@ -87,6 +95,10 @@ export class LiveInterpreter {
   private pendingLetter: string | null = null;
   private letterHold = 0;
   private lastLetter = '';
+  private suppressLettersUntil = 0;
+  private waitForStill = false;
+  private lastPreviewAt = -Infinity;
+  private lastPreview: { label: string; confidence: number; top: LiveSnapshot['top'] } | null = null;
 
   constructor(
     private readonly classifier: GlossClassifier,
@@ -107,16 +119,22 @@ export class LiveInterpreter {
     this.pendingLetter = null;
     this.letterHold = 0;
     this.lastLetter = '';
+    this.suppressLettersUntil = 0;
+    this.waitForStill = false;
+    this.lastPreviewAt = -Infinity;
+    this.lastPreview = null;
   }
 
   push(frame: RawFrame): LiveSnapshot {
     const previous = this.frames[this.frames.length - 1];
     this.frames.push(frame);
-    const speed = previous ? speedBetween(previous, frame) : 0;
+    const elapsed = previous ? frame.timeMs - previous.timeMs : 1;
+    const speed = previous && elapsed > 0 ? speedBetween(previous, frame) : 0;
     const present = handPresent(frame);
     let committed: Commit | null = null;
 
-    if (present && speed >= this.options.startSpeed) {
+    if (this.waitForStill && (!present || speed < this.options.startSpeed)) this.waitForStill = false;
+    if (present && speed >= this.options.startSpeed && !this.waitForStill) {
       if (this.segmentStart === null) {
         this.segmentStart = Math.max(0, this.frames.length - 2);
         this.committedThisSegment = false;
@@ -130,14 +148,18 @@ export class LiveInterpreter {
       const moving = present && speed >= this.options.stopSpeed;
       this.lowMotion = moving ? 0 : this.lowMotion + 1;
       const segmentLength = this.frames.length - this.segmentStart;
-      const ended = this.lowMotion >= this.options.stopFrames || !present && this.lowMotion >= 4;
+      const handLeft = !present && this.lowMotion >= 4;
+      const capped = segmentLength >= this.options.maxSegmentFrames;
+      const ended = this.lowMotion >= this.options.stopFrames || handLeft || capped;
       if (ended) {
+        if (capped && present && speed >= this.options.stopSpeed) this.waitForStill = true;
         if (!this.committedThisSegment && segmentLength >= this.options.minFrames) {
           committed = this.commitGloss(this.segmentStart, this.frames.length - this.lowMotion, this.classifier.emitThreshold);
         }
         this.segmentStart = null;
         this.lowMotion = 0;
         this.committedThisSegment = false;
+        this.lastPreview = null;
       } else if (
         !this.committedThisSegment &&
         segmentLength >= this.options.minFrames &&
@@ -158,15 +180,19 @@ export class LiveInterpreter {
     let top: LiveSnapshot['top'] = [];
 
     if (this.segmentStart !== null && this.frames.length - this.segmentStart >= this.options.minFrames) {
-      const ranked = this.rank(this.segmentStart, this.frames.length);
-      if (ranked) {
-        candidate = glossToEnglish(ranked.label);
-        confidence = ranked.confidence;
-        top = ranked.top;
+      const due = frame.timeMs - this.lastPreviewAt >= this.options.previewIntervalMs;
+      if (due || !this.lastPreview) {
+        this.lastPreview = this.rank(this.segmentStart, this.frames.length);
+        this.lastPreviewAt = frame.timeMs;
+      }
+      if (this.lastPreview) {
+        candidate = glossToEnglish(this.lastPreview.label);
+        confidence = this.lastPreview.confidence;
+        top = this.lastPreview.top;
       }
     }
 
-    if (!committed && this.segmentStart === null && present && speed < this.options.stopSpeed) {
+    if (!committed && this.segmentStart === null && present && speed < this.options.stopSpeed && frame.timeMs >= this.suppressLettersUntil) {
       const letter = this.currentLetter(frame);
       if (letter && letter.label === this.pendingLetter) this.letterHold += 1;
       else {
@@ -246,6 +272,8 @@ export class LiveInterpreter {
     const classMin = this.classifier.classThresholds?.[classIndex] ?? this.classifier.emitThreshold;
     if (prediction.confidence < Math.max(threshold, classMin) || prediction.margin < this.classifier.marginThreshold) return null;
     this.committedThisSegment = true;
+    const endFrame = this.frames[Math.min(this.frames.length - 1, Math.max(0, end - 1))];
+    this.suppressLettersUntil = (endFrame?.timeMs ?? 0) + this.options.letterCooldownMs;
     return { text: glossToEnglish(prediction.label), kind: 'gloss', confidence: prediction.confidence };
   }
 }

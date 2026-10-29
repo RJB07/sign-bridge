@@ -10,7 +10,16 @@ These two sets are the ones that would change the model if a Kaggle API token is
 - What is in it: `train.csv` (`path`, `participant_id`, `sequence_id`, `sign`), `sign_to_prediction_index_map.json` (the same 250 glosses), and `train_landmark_files/{participant_id}/{sequence_id}.parquet`.
 - Each parquet is long-form MediaPipe Holistic: `frame`, `type` (`face`, `pose`, `left_hand`, `right_hand`), `landmark_index`, `x`, `y`, `z`. About 94,000 sequences from 21 signers. The archive is on the order of 50 GB.
 - What it adds over the frames we train on now: the same words, including hello, thank you, please, yes, and no, but at the original video frame rate instead of the ~5 fps stills in `sign/popsign-images`, and hundreds of examples per gloss instead of the 40 we kept. That is the most direct way to raise signer-independent top-1 without changing the label set. It does not add “help”; help is not one of the 250.
-- How to plug it in: read each parquet into the same `{left, right, pose}` frames `sequence_features` already expects, group by `participant_id`, and keep entire participants out of training. Do not mix these sequences into the current 5 fps cache without a source flag. Prefer replacing `training/cache` and rerunning `training/train_sequence_model.py`.
+- How to run it end to end, once a token is in the environment:
+
+```bash
+export KAGGLE_API_TOKEN=...
+# or: export KAGGLE_USERNAME=... KAGGLE_KEY=...
+pip install kaggle
+PYTHONPATH=training python training/train_asl_signs.py
+```
+
+That downloads `asl-signs` into `training/data/asl-signs` (gitignored), writes a signer-disjoint cache at `training/cache-asl-signs`, and calls `training/train_sequence_model.py`. Participants are sorted and split about 65% / 15% / 20% into train / validation / test, with no participant in two splits. The trainer replaces `public/models/asl-en-sequence.json` only when test top-1 is higher than the file already there. Do not mix these sequences into the 5 fps PopSign image cache.
 
 ## Google ASL Fingerspelling
 

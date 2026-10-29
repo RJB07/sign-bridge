@@ -15,11 +15,6 @@ SignBridge is 100% free and open source under the MIT License. It relies on the 
 - **Copyright**: Google LLC
 - **URL**: https://github.com/google/mediapipe
 
-### TensorFlow.js (`@tensorflow/tfjs`)
-- **License**: Apache License 2.0
-- **Copyright**: Google LLC
-- **URL**: https://github.com/tensorflow/tfjs
-
 ### Vite
 - **License**: MIT License
 - **URL**: https://github.com/vitejs/vite

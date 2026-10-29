@@ -35,7 +35,7 @@ npm run test:e2e       # replay, undo, typed reply, contrast theme, offline relo
 
 ## Using it
 
-The English sentence is the largest text on the screen. The gloss chips under it are what the recognizer committed. Sound is off until you turn on “Speaking aloud” for a hearing person. The guess shown while the hand is still moving uses one ensemble member and no mirror, so a low-end phone can keep up. The word that is actually added uses the full model, then your saved signs if one is very close. A meter and a short “Added …” line mark the commit. If the hand is missing, too close, or out of frame, the caption says so.
+The English sentence is the largest text on the screen. The gloss chips under it are what the recognizer committed. Sound is off until you turn on “Speaking aloud” for a hearing person. The guess shown while the hand is still moving uses one ensemble member and no mirror, and it is not recomputed on every camera frame, so a low-end phone can keep up. The word that is actually added uses the full model, then your saved signs if one is very close. Camera frames are not uploaded. Speech to text, off until you press it, sends microphone audio to the browser’s speech service and not to SignBridge. A meter and a short “Added …” line mark the commit. If the hand is missing, too close, or out of frame, the caption says so.
 
 ## What you should expect
 

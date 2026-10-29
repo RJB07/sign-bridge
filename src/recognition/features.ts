@@ -24,6 +24,10 @@ function xyDist(a: Landmark, b: Landmark): number {
 
 function asPoints(value: Landmark[] | null | undefined, expected: number): Landmark[] | null {
   if (!value || value.length < expected) return null;
+  for (let index = 0; index < expected; index += 1) {
+    const point = value[index];
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) return null;
+  }
   return value;
 }
 

@@ -8,5 +8,6 @@ __pycache__/
 *.pyc
 training/data/
 training/cache/
+training/cache-asl-signs/
 training/models/
 training/artifacts/

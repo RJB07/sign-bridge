@@ -21,7 +21,7 @@ PYTHONPATH=training python -m unittest training.test_augment training.test_split
 ## What a change should keep true
 
 - The signer-independent number is the PopSign test split. Do not report a training-set score, and do not invent a higher accuracy. The current test top-1 is in `training/metrics/asl_en_metrics.json` and the README.
-- More training on the PopSign image cache we already have is not the next accuracy step. The useful addition is the Google ASL Signs landmark release once a Kaggle account can download it. `docs/KAGGLE_DATASETS.md` says how to plug that in. ASL Citizen and WLASL are not training sources: their licenses do not allow shipping the data or a model built from it.
+- More training on the PopSign image cache we already have is not the next accuracy step. The Google ASL Signs path is `training/train_asl_signs.py`. It downloads the `asl-signs` competition only when `KAGGLE_API_TOKEN` is set (or both `KAGGLE_USERNAME` and `KAGGLE_KEY`), writes a signer-disjoint cache, and retrains. `docs/KAGGLE_DATASETS.md` has the details. ASL Citizen and WLASL are not training sources: their licenses do not allow shipping the data or a model built from it.
 - PopSign ASL v1.0 is CC BY 4.0. Keep that credit.
 - Fingerspelling holdout from `sid220/asl-now-fingerspelling` is not signer-independent. Say so if you quote it.
 - Do not upload camera frames. Personal signs in `src/personalize/personalSigns.ts` are landmark summaries in `localStorage`.
