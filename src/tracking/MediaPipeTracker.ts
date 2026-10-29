@@ -6,8 +6,7 @@ import {
 } from '@mediapipe/tasks-vision';
 import type { FrameLandmarksData, Point3D, TrackingStatus } from '../types/signbridge';
 
-const HOLISTIC_MODEL =
-  'https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/latest/holistic_landmarker.task';
+const HOLISTIC_MODEL = '/models/holistic_landmarker.task';
 
 const HAND_CONNECTIONS: Array<[number, number]> = [
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -50,9 +49,7 @@ export class MediaPipeTracker {
     this.canvas.width = 640;
     this.canvas.height = 480;
     try {
-      const fileset = await FilesetResolver.forVisionTasks(
-        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.0/wasm',
-      );
+      const fileset = await FilesetResolver.forVisionTasks('/vendor/mediapipe');
       this.landmarker = await HolisticLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: HOLISTIC_MODEL },
         runningMode: 'IMAGE',
@@ -208,12 +205,12 @@ export class MediaPipeTracker {
       ctx.fill();
       if (tips[index]) {
         ctx.fillStyle = '#fff';
-        ctx.font = '700 12px "Geist Mono", monospace';
+        ctx.font = '700 12px ui-monospace, monospace';
         ctx.fillText(tips[index], x + 8, y - 6);
       }
     });
     ctx.fillStyle = '#fff';
-    ctx.font = '700 13px "Geist Mono", monospace';
+    ctx.font = '700 13px ui-monospace, monospace';
     ctx.fillText(label, points[0].x * w + 10, points[0].y * h - 8);
   }
 }

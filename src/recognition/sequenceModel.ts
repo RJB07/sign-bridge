@@ -10,6 +10,7 @@ export type Prediction = {
 export type WeightBlob = {
   weights: Record<string, string>;
   weightShapes: Record<string, number[]>;
+  dtype?: 'f16' | 'f32';
 };
 
 export type SequenceModel = {
@@ -39,7 +40,15 @@ type ModelFile = {
   marginThreshold: number;
   classThresholds?: number[];
   tta?: boolean;
+  dtype?: 'f16' | 'f32';
   members: WeightBlob[];
+};
+
+export type PredictOptions = {
+  /** How many ensemble members to run. The live preview uses one. */
+  members?: number;
+  /** Mirror the sequence and average. Defaults to the model flag. */
+  tta?: boolean;
 };
 
 const COMPOUNDS: Record<string, string> = {
@@ -64,8 +73,45 @@ export function decodeF32(encoded: string): Float32Array {
   return new Float32Array(bytes.buffer.slice(0));
 }
 
+export function float16BitsToFloat32(bits: number): number {
+  const sign = bits & 0x8000 ? -1 : 1;
+  const exp = (bits >> 10) & 0x1f;
+  const frac = bits & 0x03ff;
+  if (exp === 0) {
+    if (frac === 0) return sign * 0;
+    return sign * 2 ** -14 * (frac / 1024);
+  }
+  if (exp === 31) return frac ? Number.NaN : sign * Number.POSITIVE_INFINITY;
+  return sign * 2 ** (exp - 15) * (1 + frac / 1024);
+}
+
+export function decodeF16(encoded: string): Float32Array {
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const out = new Float32Array(bytes.byteLength / 2);
+  for (let i = 0; i < out.length; i++) out[i] = float16BitsToFloat32(view.getUint16(i * 2, true));
+  return out;
+}
+
+const decodedWeights = new WeakMap<WeightBlob, Map<string, { data: Float32Array; shape: number[] }>>();
+
 function tensor(blob: WeightBlob, name: string): { data: Float32Array; shape: number[] } {
-  return { data: decodeF32(blob.weights[name]), shape: blob.weightShapes[name] };
+  let table = decodedWeights.get(blob);
+  if (!table) {
+    table = new Map();
+    decodedWeights.set(blob, table);
+  }
+  const cached = table.get(name);
+  if (cached) return cached;
+  const encoded = blob.weights[name];
+  const value = {
+    data: blob.dtype === 'f16' ? decodeF16(encoded) : decodeF32(encoded),
+    shape: blob.weightShapes[name],
+  };
+  table.set(name, value);
+  return value;
 }
 
 function linear(x: Float32Array, rows: number, cols: number, weight: Float32Array, bias: Float32Array): Float32Array {
@@ -204,7 +250,7 @@ export function modelFromJson(payload: ModelFile): SequenceModel {
     dModel: payload.dModel,
     heads: payload.heads,
     layers: payload.layers,
-    members: payload.members,
+    members: payload.members.map((member) => ({ ...member, dtype: payload.dtype === 'f16' ? 'f16' as const : 'f32' as const })),
   };
 }
 
@@ -222,17 +268,20 @@ export function logitsForSequence(model: SequenceModel, sequence: number[][]): F
   return acc;
 }
 
-export function predictSequence(model: SequenceModel, sequence: number[][]): Prediction {
+export function predictSequence(model: SequenceModel, sequence: number[][], options: PredictOptions = {}): Prediction {
   const prepared = sequence.length === model.seqLen ? sequence : resampleSequence(sequence, model.seqLen);
-  const views = model.tta ? [prepared, mirrorSequence(prepared)] : [prepared];
+  const useTta = options.tta ?? model.tta;
+  const views = useTta ? [prepared, mirrorSequence(prepared)] : [prepared];
+  const memberCount = Math.max(1, Math.min(options.members ?? model.members.length, model.members.length));
+  const members = model.members.slice(0, memberCount);
   const acc = new Float32Array(model.labels.length);
   for (const view of views) {
-    for (const member of model.members) {
+    for (const member of members) {
       const logits = logitsForMember(view, member, model.dModel, model.heads, model.layers);
       for (let i = 0; i < acc.length; i++) acc[i] += logits[i];
     }
   }
-  const denomViews = views.length * model.members.length;
+  const denomViews = views.length * members.length;
   for (let i = 0; i < acc.length; i++) acc[i] /= denomViews;
   let max = -Infinity;
   for (let i = 0; i < acc.length; i++) if (acc[i] > max) max = acc[i];

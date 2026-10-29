@@ -8,6 +8,8 @@ export type GlossClassifier = {
   marginThreshold: number;
   classThresholds?: number[];
   predict: (sequence: number[][]) => Prediction;
+  /** Cheaper score used for the on-screen guess. Commit still uses predict. */
+  predictPreview?: (sequence: number[][]) => Prediction;
 };
 
 export type RawFrame = FeatureFrame & { timeMs: number };
@@ -227,7 +229,7 @@ export class LiveInterpreter {
     const slice = this.frames.slice(Math.max(0, start), Math.max(start, end));
     const features = sequenceFeatures(slice, this.options.forcedHand);
     if (features.length < 2) return null;
-    const prediction = this.classifier.predict(features);
+    const prediction = (this.classifier.predictPreview ?? this.classifier.predict)(features);
     const order = prediction.probabilities
       .map((probability, index) => ({ label: glossToEnglish(this.classifier.labels[index] ?? ''), probability }))
       .sort((a, b) => b.probability - a.probability)

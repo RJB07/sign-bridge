@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import smoke from './transformer-smoke.json';
-import { decodeF32, logitsForSequence, modelFromJson } from './sequenceModel';
+import { decodeF16, decodeF32, float16BitsToFloat32, logitsForSequence, modelFromJson, predictSequence } from './sequenceModel';
 
 describe('landmark transformer', () => {
   it('matches PyTorch on a tiny network', () => {
@@ -34,5 +34,27 @@ describe('landmark transformer', () => {
     let max = 0;
     for (let i = 0; i < expected.length; i++) max = Math.max(max, Math.abs(actual[i] - expected[i]));
     expect(max).toBeLessThan(1e-3);
+  });
+
+  it('decodes float16 weights and can score with one ensemble member', () => {
+    expect(float16BitsToFloat32(0x3c00)).toBe(1);
+    expect(float16BitsToFloat32(0xc000)).toBe(-2);
+    expect(float16BitsToFloat32(0x3800)).toBe(0.5);
+    const bytes = new Uint8Array([0x00, 0x3c, 0x00, 0xc0, 0x00, 0x38]);
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    const decoded = decodeF16(btoa(binary));
+    expect(Array.from(decoded)).toEqual([1, -2, 0.5]);
+
+    const model = modelFromJson(smoke);
+    const flat = decodeF32(smoke.input);
+    const sequence: number[][] = [];
+    for (let t = 0; t < model.seqLen; t++) {
+      sequence.push(Array.from(flat.slice(t * model.featureDim, (t + 1) * model.featureDim)));
+    }
+    const full = predictSequence(model, sequence, { members: model.members.length, tta: false });
+    const fast = predictSequence(model, sequence, { members: 1, tta: false });
+    expect(full.label.length).toBeGreaterThan(0);
+    expect(fast.probabilities).toHaveLength(model.labels.length);
   });
 });

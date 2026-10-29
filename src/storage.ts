@@ -1,4 +1,4 @@
-import { SignDataset } from './signModel';
+import type { SignDataset } from './dataset';
 
 const DATASET_KEY = 'signbridge-dataset';
 const MODEL_LABELS_KEY = 'signbridge-model-labels';

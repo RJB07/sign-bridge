@@ -4,7 +4,7 @@ import { LiveInterpreter, type LiveSnapshot } from './recognition/liveInterprete
 import { assessFrame } from './recognition/frameQuality';
 import { letterModelFromJson, predictLetter } from './recognition/letterModel';
 import { decodeF32, glossToEnglish, modelFromJson, predictSequence, type SequenceModel } from './recognition/sequenceModel';
-import { exportDatasetJSON, parseImportedDatasetJSON, type SignDataset } from './signModel';
+import { exportDatasetJSON, parseImportedDatasetJSON, type SignDataset } from './dataset';
 import { loadSavedDataset, saveDataset } from './storage';
 import { SignTextAssembler } from './textAssembly/SignTextAssembler';
 import { MediaPipeTracker } from './tracking/MediaPipeTracker';
@@ -20,6 +20,7 @@ function classifierFor(model: SequenceModel) {
       marginThreshold: model.marginThreshold,
       classThresholds: model.classThresholds,
       predict: (sequence: number[][]) => predictSequence(model, sequence),
+      predictPreview: (sequence: number[][]) => predictSequence(model, sequence, { members: 1, tta: false }),
     };
 }
 
@@ -265,6 +266,7 @@ function App() {
     setMatchConfidence(result.confidence * 100);
     setPhase('idle');
     setTopGuesses('');
+    setJustAdded(result.label);
     assemblerRef.current?.pushSign(result.label, result.confidence);
   };
 

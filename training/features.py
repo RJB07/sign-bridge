@@ -146,17 +146,22 @@ def mirror_sequence(seq: np.ndarray) -> np.ndarray:
 
 
 def augment_sequence(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Time warp, mirror, rotation, scale, one dropped landmark, and light noise.
+
+    PopSign clips are only a handful of frames, so the ranges stay tight enough
+    that the gloss is still recognizable. Mirror is the left-hand stand-in.
+    """
     seq = np.array(seq, dtype=np.float32, copy=True)
-    if seq.shape[0] > 3 and rng.random() < 0.85:
-        low = max(3, int(seq.shape[0] * 0.55))
-        high = min(48, max(low + 1, int(seq.shape[0] * 1.6)))
+    if seq.shape[0] > 4 and rng.random() < 0.75:
+        low = max(3, int(seq.shape[0] * 0.75))
+        high = min(48, max(low + 1, int(round(seq.shape[0] * 1.35)) + 1))
         seq = resample_sequence(seq, int(rng.integers(low, high)))
-    if seq.shape[0] > 6 and rng.random() < 0.6:
+    if seq.shape[0] > 6 and rng.random() < 0.35:
         drop = int(rng.integers(0, seq.shape[0]))
         seq = np.delete(seq, drop, axis=0)
     if rng.random() < 0.5:
         seq = mirror_sequence(seq)
-    angle = float(rng.uniform(-0.4, 0.4))
+    angle = float(rng.uniform(-0.28, 0.28))
     c, s = np.cos(angle), np.sin(angle)
     flat = seq.reshape(seq.shape[0], -1, 3)
     x = flat[:, :, 0].copy()
@@ -164,12 +169,11 @@ def augment_sequence(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     flat[:, :, 0] = c * x - s * y
     flat[:, :, 1] = s * x + c * y
     seq = flat.reshape(seq.shape[0], -1)
-    seq *= float(rng.uniform(0.75, 1.25))
-    if rng.random() < 0.45:
-        for _ in range(int(rng.integers(1, 4))):
-            landmark = int(rng.integers(0, 21))
-            seq[:, landmark * 3 : landmark * 3 + 3] = 0
-            if seq.shape[1] >= 210:
-                seq[:, 147 + landmark * 3 : 147 + landmark * 3 + 3] = 0
-    seq += rng.normal(0.0, 0.02, size=seq.shape).astype(np.float32)
+    seq *= float(rng.uniform(0.85, 1.15))
+    if rng.random() < 0.3:
+        landmark = int(rng.integers(0, 21))
+        seq[:, landmark * 3 : landmark * 3 + 3] = 0
+        if seq.shape[1] >= 210:
+            seq[:, 147 + landmark * 3 : 147 + landmark * 3 + 3] = 0
+    seq += rng.normal(0.0, 0.012, size=seq.shape).astype(np.float32)
     return seq.astype(np.float32)

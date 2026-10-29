@@ -57,4 +57,33 @@ describe('live interpreter', () => {
     }
     expect(texts).not.toContain('apple');
   });
+
+  it('previews with the fast classifier and commits with the full one', () => {
+    let preview = 0;
+    const interpreter = new LiveInterpreter(
+      {
+        labels: ['apple', 'book'],
+        emitThreshold: 0.5,
+        marginThreshold: 0.1,
+        predictPreview: () => {
+          preview += 1;
+          return { label: 'apple', confidence: 0.3, margin: 0.1, probabilities: [0.3, 0.2] };
+        },
+        predict: () => ({ label: 'book', confidence: 0.95, margin: 0.8, probabilities: [0.05, 0.95] }),
+      },
+      { startSpeed: 0.01, stopSpeed: 0.004, minFrames: 3, earlyIntervalMs: 10_000, earlyBoost: 0, stopFrames: 2 },
+    );
+    let committed = null as string | null;
+    for (let i = 0; i < 5; i++) {
+      const snap = interpreter.push(frame(i * 50, i * 0.05));
+      if (snap.candidate) expect(snap.candidate).toBe('apple');
+      if (snap.committed) committed = snap.committed.text;
+    }
+    for (let i = 5; i < 9; i++) {
+      const snap = interpreter.push(frame(i * 50, 0.2));
+      if (snap.committed) committed = snap.committed.text;
+    }
+    expect(preview).toBeGreaterThan(0);
+    expect(committed).toBe('book');
+  });
 });

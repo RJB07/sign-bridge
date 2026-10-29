@@ -35,10 +35,11 @@ SignBridge is 100% free and open source under the MIT License. It relies on the 
 - **URL**: https://signdata.cc.gatech.edu/ and https://huggingface.co/datasets/sign/popsign-images
 - **Cite**: Thad Starner et al., PopSign ASL v1.0 (NeurIPS 2023)
 
-### MediaPipe Holistic landmarker
+### MediaPipe Holistic landmarker and vision WASM
 - **License**: Apache License 2.0
 - **Copyright**: Google LLC
 - **URL**: https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/latest/holistic_landmarker.task
+- **Vendored for offline use**: `public/models/holistic_landmarker.task` and `public/vendor/mediapipe/` (`vision_wasm_internal` and `vision_wasm_nosimd_internal` from `@mediapipe/tasks-vision` 1.2.0). Phones without WASM SIMD load the nosimd build.
 
 ## 3. Datasets considered and not used for training
 
@@ -52,7 +53,7 @@ SignBridge is 100% free and open source under the MIT License. It relies on the 
 - CC BY-SA 4.0. Continuous translation, not isolated glosses. Not used, so the model is not share-alike.
 
 ### Google Isolated Sign Language Recognition (Kaggle) and ASL Fingerspelling Recognition
-- Landmark releases of PopSign and of fingerspelling phrases. CC BY 4.0. Full downloads are tens to hundreds of gigabytes and need a Kaggle account. The fingerspelling helper in the app is geometric, not trained on that set.
+- Landmark releases of PopSign and of fingerspelling phrases. CC BY 4.0. Full downloads are tens to hundreds of gigabytes and need a Kaggle account. Not used yet. The letter model in the app is trained on the MIT set `sid220/asl-now-fingerspelling`, and that holdout is not signer-independent. See `docs/KAGGLE_DATASETS.md`.
 
 ### How2Sign
 - CC BY-NC 4.0. Not used.

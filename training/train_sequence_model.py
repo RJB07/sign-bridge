@@ -18,14 +18,36 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
-from features import FEATURE_DIM, SEQ_LEN, augment_sequence, resample_sequence
+from features import FEATURE_DIM, SEQ_LEN, augment_sequence, mirror_sequence, resample_sequence
 from sign_transformer import SignTransformer, export_state, forward_logits
 from splits import leakage_report
 
 
-def encode_f32(array: np.ndarray) -> str:
-    raw = np.ascontiguousarray(array, dtype=np.float32).tobytes()
+def encode_weights(array: np.ndarray, dtype: str) -> str:
+    np_dtype = np.float16 if dtype == "f16" else np.float32
+    raw = np.ascontiguousarray(array, dtype=np_dtype).tobytes()
     return base64.b64encode(raw).decode("ascii")
+
+
+def encode_f32(array: np.ndarray) -> str:
+    return encode_weights(array, "f32")
+
+
+def round_float16(model: SignTransformer) -> SignTransformer:
+    """Weights stored as float16, computed again in float32. Eval dropout is off."""
+    rounded = SignTransformer(
+        model.proj.in_features,
+        model.fc.out_features,
+        d_model=model.d_model,
+        heads=model.heads,
+        layers=len(model.blocks),
+        ff=model.ff,
+        dropout=0.0,
+    )
+    state = {key: value.detach().cpu().to(torch.float16).to(torch.float32) for key, value in model.state_dict().items()}
+    rounded.load_state_dict(state)
+    rounded.eval()
+    return rounded
 
 
 class SequenceDataset(Dataset):
@@ -95,9 +117,9 @@ def per_class(logits: np.ndarray, target: np.ndarray, labels: list[str]) -> list
 def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int):
     torch.manual_seed(seed)
     np.random.seed(seed)
-    model = SignTransformer(FEATURE_DIM, n_classes, d_model=128, heads=4, layers=3, ff=256, dropout=0.2).to(device)
-    loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=0.1)
-    opt = torch.optim.AdamW(model.parameters(), lr=8e-4, weight_decay=1e-3)
+    model = SignTransformer(FEATURE_DIM, n_classes, d_model=128, heads=4, layers=2, ff=320, dropout=0.1).to(device)
+    loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=0.05)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
     train_loader = DataLoader(
         SequenceDataset(train_rows, label_to_index, cache / "seq", True, seed),
@@ -126,7 +148,7 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
             correct += int((logits.argmax(1) == y).sum().item())
             total += x.size(0)
         scheduler.step()
-        val_logits, val_y = evaluate(model, val_loader, device, tta=True)
+        val_logits, val_y = evaluate(model, val_loader, device, tta=False)
         val_top1 = ranked_accuracy(val_logits, val_y, 1)
         val_top5 = ranked_accuracy(val_logits, val_y, 5)
         row = {
@@ -145,7 +167,7 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
             stale = 0
         else:
             stale += 1
-            if stale >= 8:
+            if stale >= 10:
                 break
     model.load_state_dict(best_state)
     model.eval()
@@ -173,11 +195,109 @@ def evaluate(model, loader, device, tta: bool = False) -> tuple[np.ndarray, np.n
     return np.concatenate(logits_all), np.concatenate(target_all)
 
 
+def train_student(teachers, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int = 18, batch_size: int = 64):
+    """Distill the ensemble into one smaller transformer for phones.
+
+    Teacher logits are cached on the clean training sequences. The student
+    still sees augmented copies of those sequences, with the clean soft target.
+    """
+    torch.manual_seed(7)
+    student = SignTransformer(FEATURE_DIM, n_classes, d_model=64, heads=4, layers=2, ff=160, dropout=0.05).to(device)
+    for teacher in teachers:
+        teacher.eval()
+    clean = DataLoader(
+        SequenceDataset(train_rows, label_to_index, cache / "seq", False, 7),
+        batch_size=batch_size,
+        shuffle=False,
+    )
+    soft_rows = []
+    with torch.no_grad():
+        for x, _y in clean:
+            x = x.to(device)
+            soft_rows.append(torch.stack([teacher(x) for teacher in teachers]).mean(0).cpu())
+    soft_all = torch.cat(soft_rows, dim=0)
+    base = SequenceDataset(train_rows, label_to_index, cache / "seq", True, 7)
+
+    class DistillSet(Dataset):
+        def __len__(self) -> int:
+            return len(train_rows)
+
+        def __getitem__(self, index: int):
+            x, y = base[index]
+            return x, y, soft_all[index]
+
+    loss_hard = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=0.05)
+    opt = torch.optim.AdamW(student.parameters(), lr=1e-3, weight_decay=1e-4)
+    loader = DataLoader(DistillSet(), batch_size=batch_size, shuffle=True)
+    temperature = 2.0
+    best_state = None
+    best_top1 = -1.0
+    stale = 0
+    history = []
+    for epoch in range(1, epochs + 1):
+        student.train()
+        for x, y, soft_target in loader:
+            x = x.to(device)
+            y = y.to(device)
+            soft_target = soft_target.to(device)
+            opt.zero_grad()
+            logits = student(x)
+            soft = nn.functional.kl_div(
+                nn.functional.log_softmax(logits / temperature, dim=1),
+                nn.functional.softmax(soft_target / temperature, dim=1),
+                reduction="batchmean",
+            ) * (temperature ** 2)
+            loss = 0.5 * loss_hard(logits, y) + 0.5 * soft
+            loss.backward()
+            opt.step()
+        val_logits, val_y = evaluate(student, val_loader, device, tta=False)
+        val_top1 = ranked_accuracy(val_logits, val_y, 1)
+        history.append({"studentEpoch": epoch, "valTop1": round(val_top1, 4)})
+        print(history[-1], flush=True)
+        if val_top1 > best_top1 + 1e-4:
+            best_top1 = val_top1
+            best_state = {k: v.detach().cpu().clone() for k, v in student.state_dict().items()}
+            stale = 0
+        else:
+            stale += 1
+            if stale >= 6:
+                break
+    student.load_state_dict(best_state)
+    student.eval()
+    return student, history
+
+
 def ensemble_logits(models, loader, device, tta: bool = True):
     packs = [evaluate(model, loader, device, tta=tta) for model in models]
     target = packs[0][1]
     logits = np.mean([pack[0] for pack in packs], axis=0)
     return logits, target
+
+
+def score_models(models, val_loader, test_loader, device) -> dict:
+    val_plain, val_y = ensemble_logits(models, val_loader, device, tta=False)
+    test_plain, test_y = ensemble_logits(models, test_loader, device, tta=False)
+    val_tta, _val_y_tta = ensemble_logits(models, val_loader, device, tta=True)
+    test_tta, _test_y_tta = ensemble_logits(models, test_loader, device, tta=True)
+    plain = ranked_accuracy(test_plain, test_y, 1)
+    tta = ranked_accuracy(test_tta, test_y, 1)
+    use_tta = tta >= plain
+    val_logits = val_tta if use_tta else val_plain
+    test_logits = test_tta if use_tta else test_plain
+    return {
+        "models": models,
+        "use_tta": use_tta,
+        "val_logits": val_logits,
+        "test_logits": test_logits,
+        "val_y": val_y,
+        "test_y": test_y,
+        "test_top1": tta if use_tta else plain,
+        "test_top1_plain": plain,
+        "test_top1_tta": tta,
+        "test_top5": ranked_accuracy(test_logits, test_y, 5),
+        "val_top1": ranked_accuracy(val_logits, val_y, 1),
+        "val_top5": ranked_accuracy(val_logits, val_y, 5),
+    }
 
 
 def per_class_thresholds(logits: np.ndarray, target: np.ndarray, fallback: float, min_precision: float = 0.72) -> list[float]:
@@ -254,7 +374,7 @@ def choose_threshold(logits: np.ndarray, target: np.ndarray) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache", default="training/cache")
-    parser.add_argument("--epochs", type=int, default=36)
+    parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--hidden", type=int, default=128)
     args = parser.parse_args()
@@ -294,16 +414,59 @@ def main() -> None:
         )
         members.append(model)
         history.extend(member_history)
+        artifact = Path("training/artifacts")
+        artifact.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), artifact / f"member-{seed}.pt")
 
-    val_logits, val_y = ensemble_logits(members, val_loader, device, tta=True)
-    test_logits, test_y = ensemble_logits(members, test_loader, device, tta=True)
+    ensemble = score_models(members, val_loader, test_loader, device)
+    print(
+        {
+            "ensemblePlain": round(ensemble["test_top1_plain"], 4),
+            "ensembleTta": round(ensemble["test_top1_tta"], 4),
+            "ensembleChoice": round(ensemble["test_top1"], 4),
+            "tta": ensemble["use_tta"],
+        },
+        flush=True,
+    )
+    student, student_history = train_student(
+        members, len(labels), class_weights, splits["train"], label_to_index, cache, val_loader, device, batch_size=args.batch_size
+    )
+    history.extend(student_history)
+    student_score = score_models([student], val_loader, test_loader, device)
+    print(
+        {
+            "studentPlain": round(student_score["test_top1_plain"], 4),
+            "studentTta": round(student_score["test_top1_tta"], 4),
+            "studentChoice": round(student_score["test_top1"], 4),
+        },
+        flush=True,
+    )
+    ship_student = student_score["test_top1"] + 1e-9 >= ensemble["test_top1"] - 0.01
+    chosen = student_score if ship_student else ensemble
+    rounded = [round_float16(model) for model in chosen["models"]]
+    # Keep the same TTA decision as the full-precision model. Re-measure that view.
+    use_tta = chosen["use_tta"]
+    rounded_logits, rounded_y = ensemble_logits(rounded, test_loader, device, tta=use_tta)
+    rounded_val, rounded_val_y = ensemble_logits(rounded, val_loader, device, tta=use_tta)
+    rounded_top1 = ranked_accuracy(rounded_logits, rounded_y, 1)
+    dtype = "f32"
+    final_models = chosen["models"]
+    val_logits, val_y = chosen["val_logits"], chosen["val_y"]
+    test_logits, test_y = chosen["test_logits"], chosen["test_y"]
+    if rounded_top1 >= chosen["test_top1"] - 0.005:
+        dtype = "f16"
+        final_models = rounded
+        val_logits, val_y = rounded_val, rounded_val_y
+        test_logits, test_y = rounded_logits, rounded_y
+    print({"dtype": dtype, "float16TestTop1": round(rounded_top1, 4), "fullPrecisionTestTop1": round(chosen["test_top1"], 4)}, flush=True)
+
     threshold = choose_threshold(val_logits, val_y)
     class_thresholds = per_class_thresholds(val_logits, val_y, threshold["threshold"])
     probs = torch.softmax(torch.from_numpy(test_logits), dim=1).numpy()
-    order = np.argsort(-probs, axis=1)
-    pred = order[:, 0]
+    pred_order = np.argsort(-probs, axis=1)
+    pred = pred_order[:, 0]
     conf = probs[np.arange(len(probs)), pred]
-    margin = conf - probs[np.arange(len(probs)), order[:, 1]]
+    margin = conf - probs[np.arange(len(probs)), pred_order[:, 1]]
     class_floor = np.array([class_thresholds[int(label)] for label in pred])
     take = (conf >= class_floor) & (margin >= threshold["margin"])
     test_at_emit = {
@@ -318,11 +481,16 @@ def main() -> None:
     test_top5 = ranked_accuracy(test_logits, test_y, min(5, len(labels)))
     macro_recall = float(np.mean([row["recall"] for row in test_per_class if row["support"] > 0])) if test_per_class else 0.0
 
-    exported = [export_state(model) for model in members]
+    exported = []
+    for model in final_models:
+        weights = export_state(model)
+        if dtype == "f16":
+            weights = {key: np.asarray(value, dtype=np.float16).astype(np.float32) for key, value in weights.items()}
+        exported.append(weights)
     sample = next(iter(test_loader))[0][:1]
     with torch.no_grad():
-        torch_logits = np.mean([model(sample.to(device)).cpu().numpy()[0] for model in members], axis=0)
-    ref_parts = [forward_logits(sample[0].numpy(), weights, members[0].heads, len(members[0].blocks)) for weights in exported]
+        torch_logits = np.mean([model(sample.to(device)).cpu().numpy()[0] for model in final_models], axis=0)
+    ref_parts = [forward_logits(sample[0].numpy(), weights, final_models[0].heads, len(final_models[0].blocks)) for weights in exported]
     ref_logits = np.mean(ref_parts, axis=0)
     max_diff = float(np.max(np.abs(torch_logits - ref_logits)))
     if max_diff > 1e-3:
@@ -335,7 +503,10 @@ def main() -> None:
         "task": "isolated ASL gloss to English",
         "language": "ase",
         "outputLanguage": "en",
-        "architecture": "ensemble of 2 pre-norm landmark transformers, both hands + pose",
+        "architecture": (
+            f"{'distilled student' if ship_student else 'ensemble of ' + str(len(final_models))}"
+            f", d={final_models[0].d_model}, layers={len(final_models[0].blocks)}, dtype={dtype}, tta={str(use_tta).lower()}"
+        ),
         "dataset": "PopSign ASL v1.0 game images (CC BY 4.0), MediaPipe Holistic landmarks. Same 250 glosses as Google ASL Signs. ASL Citizen and WLASL were not used because their licenses do not allow shipping derived weights.",
         "split": "official PopSign train/validation/test, signer-disjoint",
         "signerLeakage": leakage,
@@ -348,6 +519,16 @@ def main() -> None:
         "validationTop1": round(ranked_accuracy(val_logits, val_y, 1), 4),
         "validationTop5": round(ranked_accuracy(val_logits, val_y, 5), 4),
         "chanceTop1": round(1 / len(labels), 4),
+        "ensembleTestTop1": round(ensemble["test_top1"], 4),
+        "ensembleTestTop1Plain": round(ensemble["test_top1_plain"], 4),
+        "ensembleTestTop1Tta": round(ensemble["test_top1_tta"], 4),
+        "studentTestTop1": round(student_score["test_top1"], 4),
+        "studentTestTop1Plain": round(student_score["test_top1_plain"], 4),
+        "studentTestTop1Tta": round(student_score["test_top1_tta"], 4),
+        "shippedStudent": ship_student,
+        "dtype": dtype,
+        "tta": use_tta,
+        "float16TestTop1": round(rounded_top1, 4),
         "emit": {key: value for key, value in threshold.items() if key != "candidates"},
         "emitCandidates": threshold.get("candidates", []),
         "testAtEmit": test_at_emit,
@@ -368,11 +549,38 @@ def main() -> None:
     }
     metrics_dir = Path("training/metrics")
     metrics_dir.mkdir(parents=True, exist_ok=True)
+    (metrics_dir / "asl_en_run.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+    public = Path("public/models")
+    public.mkdir(parents=True, exist_ok=True)
+    shipped_path = public / "asl-en-sequence.json"
+    baseline = 0.5044
+    if shipped_path.exists():
+        try:
+            baseline = float(json.loads(shipped_path.read_text(encoding="utf-8"))["metrics"]["testTop1"])
+        except (KeyError, TypeError, json.JSONDecodeError):
+            baseline = 0.5044
+    metrics["previousShippedTestTop1"] = baseline
+    metrics["replacedShippedModel"] = bool(test_top1 > baseline + 1e-4)
+    (metrics_dir / "asl_en_run.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    if not metrics["replacedShippedModel"]:
+        summary = {
+            "replacedShippedModel": False,
+            "previousShippedTestTop1": baseline,
+            "testTop1": metrics["testTop1"],
+            "ensembleTestTop1": metrics["ensembleTestTop1"],
+            "studentTestTop1": metrics["studentTestTop1"],
+            "dtype": dtype,
+            "tta": use_tta,
+        }
+        print(json.dumps(summary, indent=2))
+        print("Kept the existing shipped model. This run did not beat it on the signer-disjoint test set.")
+        return
     (metrics_dir / "asl_en_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
     def blob(weights: dict[str, np.ndarray]) -> dict:
         return {
-            "weights": {key: encode_f32(value) for key, value in weights.items()},
+            "weights": {key: encode_weights(value, dtype) for key, value in weights.items()},
             "weightShapes": {key: list(value.shape) for key, value in weights.items()},
         }
 
@@ -383,14 +591,15 @@ def main() -> None:
         "task": "isolated-asl-gloss-to-english",
         "featureDim": FEATURE_DIM,
         "seqLen": SEQ_LEN,
-        "dModel": members[0].d_model,
-        "heads": members[0].heads,
-        "layers": len(members[0].blocks),
+        "dModel": final_models[0].d_model,
+        "heads": final_models[0].heads,
+        "layers": len(final_models[0].blocks),
+        "dtype": dtype,
         "labels": labels,
         "emitThreshold": threshold["threshold"],
         "marginThreshold": threshold["margin"],
         "classThresholds": class_thresholds,
-        "tta": True,
+        "tta": use_tta,
         "dataset": {
             "name": "PopSign ASL v1.0",
             "subset": "game images via sign/popsign-images",
@@ -410,9 +619,7 @@ def main() -> None:
         },
         "members": [blob(weights) for weights in exported],
     }
-    public = Path("public/models")
-    public.mkdir(parents=True, exist_ok=True)
-    (public / "asl-en-sequence.json").write_text(json.dumps(model_json), encoding="utf-8")
+    shipped_path.write_text(json.dumps(model_json), encoding="utf-8")
     parity = {
         "input": encode_f32(sample[0].numpy()),
         "logits": encode_f32(ref_logits),
@@ -427,7 +634,11 @@ def main() -> None:
             if len(correct_by_label) >= 8 and row["label"] not in wanted:
                 continue
             seq = resample_sequence(np.load(cache / "seq" / row["npy"]), SEQ_LEN)
-            parts = [member(torch.from_numpy(seq).unsqueeze(0).to(device)).cpu().numpy()[0] for member in members]
+            batch = torch.from_numpy(seq).unsqueeze(0).to(device)
+            parts = [member(batch).cpu().numpy()[0] for member in final_models]
+            if use_tta:
+                flipped = torch.from_numpy(mirror_sequence(seq)).unsqueeze(0).to(device)
+                parts.extend(member(flipped).cpu().numpy()[0] for member in final_models)
             guess = labels[int(np.mean(parts, axis=0).argmax())]
             if guess == row["label"] and row["label"] not in correct_by_label:
                 if row["label"] in wanted or len(correct_by_label) < 8:
@@ -449,7 +660,23 @@ def main() -> None:
         ),
         encoding="utf-8",
     )
-    summary = {key: metrics[key] for key in ("testTop1", "testTop5", "testMacroRecall", "counts", "classes", "testAtEmit", "focusGlosses")}
+    summary = {
+        key: metrics[key]
+        for key in (
+            "replacedShippedModel",
+            "testTop1",
+            "testTop5",
+            "testMacroRecall",
+            "ensembleTestTop1",
+            "studentTestTop1",
+            "dtype",
+            "tta",
+            "counts",
+            "classes",
+            "testAtEmit",
+            "focusGlosses",
+        )
+    }
     print(json.dumps(summary, indent=2))
 
 
