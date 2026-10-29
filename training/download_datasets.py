@@ -39,7 +39,7 @@ def init_wlasl100_manifest():
         "kaggle_url": "https://www.kaggle.com/datasets/nadimsrabon6/wlasl100-video-classification-dataset",
         "num_classes": 100,
         "features": ["Handshape", "Trajectory", "Spatial Location"],
-        "status": "READY_FOR_MODEL_TRAINING"
+        "status": "INDEX_ONLY_NOT_USED"
     }
     with open(wlasl100_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
@@ -52,7 +52,7 @@ def init_fleurs_asl_manifest():
         "description": "Google DeepMind Sign Language to Text (SL2T) Landmark Sequence Benchmark",
         "kaggle_url": "https://www.kaggle.com/datasets/googleai/fleurs-asl",
         "mediapipe_url": "https://research.google/blog/mediapipe-holistic-simultaneous-face-hand-and-pose-prediction-on-device/",
-        "status": "READY_FOR_LOCAL_TRAINING",
+        "status": "NOT_DOWNLOADED_NOT_USED",
         "recommended_download_cmd": "python -c 'import kagglehub; path = kagglehub.dataset_download(\"googleai/fleurs-asl\"); print(path)'"
     }
     with open(fleurs_path, "w", encoding="utf-8") as f:

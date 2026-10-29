@@ -1,0 +1,234 @@
+import { classifyFingerspelling } from './fingerspelling';
+import { sequenceFeatures, type FeatureFrame, type HandSide, type Landmark } from './features';
+import { glossToEnglish, type Prediction } from './sequenceModel';
+
+export type GlossClassifier = {
+  labels: string[];
+  emitThreshold: number;
+  marginThreshold: number;
+  predict: (sequence: number[][]) => Prediction;
+};
+
+export type RawFrame = FeatureFrame & { timeMs: number };
+
+export type Commit = {
+  text: string;
+  kind: 'gloss' | 'letter';
+  confidence: number;
+};
+
+export type LiveSnapshot = {
+  candidate: string | null;
+  confidence: number;
+  phase: 'idle' | 'signing' | 'fingerspelling';
+  committed: Commit | null;
+  top: Array<{ label: string; probability: number }>;
+};
+
+export type InterpreterOptions = {
+  forcedHand?: HandSide | null;
+  startSpeed?: number;
+  stopSpeed?: number;
+  stopFrames?: number;
+  minFrames?: number;
+  earlyIntervalMs?: number;
+  earlyBoost?: number;
+  letterHoldFrames?: number;
+};
+
+const DEFAULTS = {
+  startSpeed: 0.012,
+  stopSpeed: 0.007,
+  stopFrames: 10,
+  minFrames: 6,
+  earlyIntervalMs: 220,
+  earlyBoost: 0.12,
+  letterHoldFrames: 8,
+};
+
+function wrist(frame: RawFrame, side: 'left' | 'right'): Landmark | null {
+  const hand = frame[side];
+  return hand && hand.length >= 21 ? hand[0] : null;
+}
+
+function speedBetween(prev: RawFrame, cur: RawFrame): number {
+  let best = 0;
+  for (const side of ['left', 'right'] as const) {
+    const a = wrist(prev, side);
+    const b = wrist(cur, side);
+    if (!a || !b) continue;
+    best = Math.max(best, Math.hypot(a.x - b.x, a.y - b.y));
+  }
+  return best;
+}
+
+function handPresent(frame: RawFrame): boolean {
+  return Boolean(wrist(frame, 'left') || wrist(frame, 'right'));
+}
+
+/**
+ * Turns a landmark stream into English glosses (trained model) or letters
+ * (geometric fingerspelling) without committing every frame.
+ */
+export class LiveInterpreter {
+  private readonly options: Required<Omit<InterpreterOptions, 'forcedHand'>> & { forcedHand: HandSide | null };
+  private frames: RawFrame[] = [];
+  private segmentStart: number | null = null;
+  private lowMotion = 0;
+  private lastClassifyAt = -Infinity;
+  private committedThisSegment = false;
+  private pendingLetter: string | null = null;
+  private letterHold = 0;
+  private lastLetter = '';
+
+  constructor(
+    private readonly classifier: GlossClassifier,
+    options: InterpreterOptions = {},
+  ) {
+    this.options = { ...DEFAULTS, forcedHand: null, ...options };
+  }
+
+  setForcedHand(hand: HandSide | null): void {
+    this.options.forcedHand = hand;
+  }
+
+  reset(): void {
+    this.frames = [];
+    this.segmentStart = null;
+    this.lowMotion = 0;
+    this.committedThisSegment = false;
+    this.pendingLetter = null;
+    this.letterHold = 0;
+    this.lastLetter = '';
+  }
+
+  push(frame: RawFrame): LiveSnapshot {
+    const previous = this.frames[this.frames.length - 1];
+    this.frames.push(frame);
+    const speed = previous ? speedBetween(previous, frame) : 0;
+    const present = handPresent(frame);
+    let committed: Commit | null = null;
+
+    if (present && speed >= this.options.startSpeed) {
+      if (this.segmentStart === null) {
+        this.segmentStart = Math.max(0, this.frames.length - 2);
+        this.committedThisSegment = false;
+      }
+      this.lowMotion = 0;
+      this.pendingLetter = null;
+      this.letterHold = 0;
+    }
+
+    if (this.segmentStart !== null) {
+      const moving = present && speed >= this.options.stopSpeed;
+      this.lowMotion = moving ? 0 : this.lowMotion + 1;
+      const segmentLength = this.frames.length - this.segmentStart;
+      const ended = this.lowMotion >= this.options.stopFrames || !present && this.lowMotion >= 4;
+      if (ended) {
+        if (!this.committedThisSegment && segmentLength >= this.options.minFrames) {
+          committed = this.commitGloss(this.segmentStart, this.frames.length - this.lowMotion, this.classifier.emitThreshold);
+        }
+        this.segmentStart = null;
+        this.lowMotion = 0;
+        this.committedThisSegment = false;
+      } else if (
+        !this.committedThisSegment &&
+        segmentLength >= this.options.minFrames &&
+        frame.timeMs - this.lastClassifyAt >= this.options.earlyIntervalMs
+      ) {
+        committed = this.commitGloss(
+          this.segmentStart,
+          this.frames.length,
+          this.classifier.emitThreshold + this.options.earlyBoost,
+        );
+        this.lastClassifyAt = frame.timeMs;
+      }
+    }
+
+    let phase: LiveSnapshot['phase'] = this.segmentStart !== null ? 'signing' : 'idle';
+    let candidate: string | null = null;
+    let confidence = 0;
+    let top: LiveSnapshot['top'] = [];
+
+    if (this.segmentStart !== null && this.frames.length - this.segmentStart >= this.options.minFrames) {
+      const ranked = this.rank(this.segmentStart, this.frames.length);
+      if (ranked) {
+        candidate = glossToEnglish(ranked.label);
+        confidence = ranked.confidence;
+        top = ranked.top;
+      }
+    }
+
+    if (!committed && this.segmentStart === null && present && speed < this.options.stopSpeed) {
+      const letter = this.currentLetter(frame);
+      if (letter && letter === this.pendingLetter) this.letterHold += 1;
+      else {
+        this.pendingLetter = letter;
+        this.letterHold = letter ? 1 : 0;
+      }
+      if (letter) {
+        phase = 'fingerspelling';
+        candidate = letter;
+        confidence = Math.min(0.99, this.letterHold / (this.options.letterHoldFrames + 2));
+        const ready = this.letterHold >= this.options.letterHoldFrames;
+        const repeat = letter === this.lastLetter && this.letterHold >= this.options.letterHoldFrames * 3;
+        const first = letter !== this.lastLetter && ready;
+        if (first || repeat) {
+          committed = { text: letter, kind: 'letter', confidence };
+          this.lastLetter = letter;
+          if (repeat) this.letterHold = 0;
+        }
+      }
+    }
+
+    if (this.frames.length > 180) {
+      const drop = this.frames.length - 180;
+      this.frames.splice(0, drop);
+      if (this.segmentStart !== null) this.segmentStart = Math.max(0, this.segmentStart - drop);
+    }
+
+    return { candidate, confidence, phase, committed, top };
+  }
+
+  /** Classify a prepared feature sequence. Used by the held-out replay control. */
+  classifyPrepared(features: number[][]): { label: string; confidence: number; margin: number } {
+    const prediction = this.classifier.predict(features);
+    return {
+      label: glossToEnglish(prediction.label),
+      confidence: prediction.confidence,
+      margin: prediction.margin,
+    };
+  }
+
+  private currentLetter(frame: RawFrame): string | null {
+    const side = this.options.forcedHand === 'Left' ? 'left' : this.options.forcedHand === 'Right' ? 'right' : null;
+    const hands = side ? [frame[side]] : [frame.right, frame.left];
+    for (const hand of hands) {
+      const letter = classifyFingerspelling(hand);
+      if (letter) return letter;
+    }
+    return null;
+  }
+
+  private rank(start: number, end: number): { label: string; confidence: number; top: LiveSnapshot['top'] } | null {
+    const slice = this.frames.slice(Math.max(0, start), Math.max(start, end));
+    const features = sequenceFeatures(slice, this.options.forcedHand);
+    if (features.length < 2) return null;
+    const prediction = this.classifier.predict(features);
+    const order = prediction.probabilities
+      .map((probability, index) => ({ label: glossToEnglish(this.classifier.labels[index] ?? ''), probability }))
+      .sort((a, b) => b.probability - a.probability)
+      .slice(0, 5);
+    return { label: prediction.label, confidence: prediction.confidence, top: order };
+  }
+
+  private commitGloss(start: number, end: number, threshold: number): Commit | null {
+    const slice = this.frames.slice(Math.max(0, start), Math.max(start, end));
+    const features = sequenceFeatures(slice, this.options.forcedHand);
+    if (features.length < 2) return null;
+    const prediction = this.classifier.predict(features);
+    if (prediction.confidence < threshold || prediction.margin < this.classifier.marginThreshold) return null;
+    this.committedThisSegment = true;
+    return { text: glossToEnglish(prediction.label), kind: 'gloss', confidence: prediction.confidence };
+  }
+}

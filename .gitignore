@@ -3,3 +3,10 @@ dist
 .vscode
 .DS_Store
 .env
+.venv/
+__pycache__/
+*.pyc
+training/data/
+training/cache/
+training/models/
+training/artifacts/

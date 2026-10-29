@@ -13,13 +13,16 @@ export class SignTextAssembler {
 
   private onPhraseUpdate: (phrase: string[]) => void;
   private onSentenceComplete: (message: ConversationMessage) => void;
+  private now: () => number;
 
   constructor(
     onPhraseUpdate: (phrase: string[]) => void,
-    onSentenceComplete: (message: ConversationMessage) => void
+    onSentenceComplete: (message: ConversationMessage) => void,
+    now: () => number = () => performance.now(),
   ) {
     this.onPhraseUpdate = onPhraseUpdate;
     this.onSentenceComplete = onSentenceComplete;
+    this.now = now;
   }
 
   public pushSign(signText: string, confidence: number = 90): void {
@@ -29,7 +32,7 @@ export class SignTextAssembler {
       return;
     }
 
-    const now = performance.now();
+    const now = this.now();
 
     // Debounce duplicate frame signs within debounceMs
     if (signText === this.lastSign && now - this.lastSignTimestamp < this.debounceMs) {
@@ -57,7 +60,7 @@ export class SignTextAssembler {
 
   public checkPauseBoundary(): void {
     if (this.lastSignTimestamp === 0) return;
-    const elapsed = performance.now() - this.lastSignTimestamp;
+    const elapsed = this.now() - this.lastSignTimestamp;
 
     // Word boundary flush for fingerspelling
     if (elapsed > this.wordPauseMs && this.currentWordBuffer.length > 0) {
@@ -75,7 +78,6 @@ export class SignTextAssembler {
         sender: 'SIGNER',
         text: translatedText,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        confidence: 95,
         grammarRuleApplied: ruleName,
       };
 
@@ -85,55 +87,22 @@ export class SignTextAssembler {
   }
 
   /**
-   * Applies Dr. David A. Stewart's 10 Basic ASL Grammar Rules & DeepMind SL2T Direct Sentence Assembly
+   * Light English formatting only. Isolated glosses are not a full ASL grammar translation.
    */
   private applyASLGrammarRules(tokens: string[]): { translatedText: string; ruleName: string } {
     if (tokens.length === 0) return { translatedText: '', ruleName: 'None' };
 
     const raw = tokens.join(' ');
-    let ruleName = 'Standard SVO (Rule #8)';
-
-    // Rule #2: Tense with Time Adverbs at Start (YESTERDAY, TODAY, TOMORROW, NOW, PAST)
-    const timeWords = ['Yesterday', 'Today', 'Tomorrow', 'Now', 'Past', 'Last-Week', 'Next-Week'];
-    const hasTimeWord = timeWords.some(t => tokens[0]?.toLowerCase() === t.toLowerCase());
-
-    // Rule #5: Wh-Questions (WHO, WHAT, WHEN, WHERE, WHY, WHICH, HOW at end)
     const whWords = ['who', 'what', 'when', 'where', 'why', 'which', 'how'];
-    const lastTokenLower = tokens[tokens.length - 1]?.toLowerCase();
-    const isWhQuestion = whWords.includes(lastTokenLower);
-
-    // Rule #9: Conditional Sentences (SUPPOSE, IF at start)
-    const isConditional = tokens[0]?.toLowerCase() === 'suppose' || tokens[0]?.toLowerCase() === 'if';
-
-    // Rule #10: Negation (NOT, NEVER, NONE, CAN'T, DON'T-WANT)
-    const negWords = ['not', 'never', 'none', "can't", "don't-want", "don't-know", 'no'];
-    const hasNegation = tokens.some(t => negWords.includes(t.toLowerCase()));
-
-    // Rule #7: Rhetorical Question (e.g. ME EXCITED WHY? -> "I am excited because...")
-    const isRhetorical = tokens.includes('WHY') && tokens.indexOf('WHY') < tokens.length - 1;
-
-    let result = raw;
-
-    if (isConditional) {
-      ruleName = 'Conditional Sentence (Rule #9)';
-      result = raw.endsWith('?') ? raw : `${raw}?`;
-    } else if (isWhQuestion) {
-      ruleName = 'Wh-Question (Rule #5)';
-      if (!raw.endsWith('?')) result = `${raw}?`;
-    } else if (hasTimeWord) {
-      ruleName = 'Time-First Tense (Rule #2)';
-    } else if (hasNegation) {
-      ruleName = 'Negation (Rule #10)';
-    } else if (isRhetorical) {
-      ruleName = 'Rhetorical Question (Rule #7)';
-    }
-
-    // Capitalize first letter and sanitize punctuation
-    result = result.charAt(0).toUpperCase() + result.slice(1);
-    if (!/[.!?]$/.test(result)) {
+    const isWhQuestion = whWords.includes(tokens[tokens.length - 1]?.toLowerCase());
+    let result = raw.charAt(0).toUpperCase() + raw.slice(1);
+    let ruleName = 'English formatting';
+    if (isWhQuestion) {
+      ruleName = 'Question mark';
+      if (!result.endsWith('?')) result = `${result}?`;
+    } else if (!/[.!?]$/.test(result)) {
       result += '.';
     }
-
     return { translatedText: result, ruleName };
   }
 

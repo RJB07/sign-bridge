@@ -14,11 +14,11 @@ export type PoseLandmarks = Point3D[];
 export type HeadGestureType = 'NOD_YES' | 'SHAKE_NO' | 'TILT' | 'EYEBROWS_RAISED' | 'EYEBROWS_SQUEEZED' | 'NONE';
 
 export type FrameLandmarksData = {
-  hands: HandLandmarks[];
-  handedness: Array<{ label: string; score: number }>;
-  face: FaceLandmarks | null;
-  pose: PoseLandmarks | null;
-  headGesture: HeadGestureType;
+  leftHand: Point3D[] | null;
+  rightHand: Point3D[] | null;
+  pose: Point3D[] | null;
+  faceDetected: boolean;
+  handsCount: number;
   timestamp: number;
   fps: number;
 };
@@ -27,13 +27,9 @@ export type TrackingStatus = {
   cameraActive: boolean;
   permissionGranted: boolean;
   handsCount: number;
-  faceDetected: boolean;
-  headGesture: HeadGestureType;
+  poseDetected: boolean;
   message: string;
-  isPrivacyMode: boolean; // DeepMind SL2T Privacy: Video frames discarded; coordinate streaming only
-  signerHandedness: 'AUTO' | 'LEFT' | 'RIGHT';
-  isOneHandedMode: boolean; // Adaptive 1-hand mobile dictation
-  errorCode: 'NONE' | 'PERMISSION_DENIED' | 'NO_CAMERA' | 'LOW_CONFIDENCE' | 'LIBRARY_LOAD_ERROR';
+  errorCode: 'NONE' | 'PERMISSION_DENIED' | 'NO_CAMERA' | 'LIBRARY_LOAD_ERROR' | 'MODEL_LOAD_ERROR';
 };
 
 export type RecognitionMode = 'FINGERSPELLING' | 'COMMON_WORDS' | 'HYBRID' | 'SL2T_DIRECT_STREAM';
