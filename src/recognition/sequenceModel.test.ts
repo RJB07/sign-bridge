@@ -49,7 +49,7 @@ describe('landmark transformer', () => {
     let max = 0;
     for (let i = 0; i < expected.length; i++) max = Math.max(max, Math.abs(actual[i] - expected[i]));
     expect(max).toBeLessThan(1e-4);
-    expect(model.members[0].weights['conv1.weight']).toBeTruthy();
+    expect(model.members[0].weights['dw1.weight']).toBeTruthy();
   });
 
   it('decodes float16 weights and can score with one ensemble member', () => {

@@ -37,14 +37,16 @@ class SignTransformer(nn.Module):
         self.proj = nn.Linear(feature_dim, d_model)
         self.pos = nn.Parameter(torch.zeros(1, seq_len, d_model))
         if stem:
-            # Local motion before attention. Residual so the stem can start near the linear projection.
-            self.conv1 = nn.Conv1d(d_model, d_model, kernel_size=5, padding=2)
-            self.conv2 = nn.Conv1d(d_model, d_model, kernel_size=3, padding=1)
+            # Depthwise temporal filters stay cheap in the browser. Pointwise mixes channels.
+            # Residual so the stem can start near the linear projection.
+            self.dw1 = nn.Conv1d(d_model, d_model, kernel_size=5, padding=2, groups=d_model)
+            self.pw1 = nn.Conv1d(d_model, d_model, kernel_size=1)
+            self.dw2 = nn.Conv1d(d_model, d_model, kernel_size=3, padding=1, groups=d_model)
+            self.pw2 = nn.Conv1d(d_model, d_model, kernel_size=1)
             self.stem_ln = nn.LayerNorm(d_model)
-            nn.init.normal_(self.conv1.weight, std=0.02)
-            nn.init.zeros_(self.conv1.bias)
-            nn.init.normal_(self.conv2.weight, std=0.02)
-            nn.init.zeros_(self.conv2.bias)
+            for conv in (self.dw1, self.pw1, self.dw2, self.pw2):
+                nn.init.normal_(conv.weight, std=0.02)
+                nn.init.zeros_(conv.bias)
         self.blocks = nn.ModuleList([EncoderBlock(d_model, heads, ff, dropout) for _ in range(layers)])
         self.final_ln = nn.LayerNorm(d_model)
         self.fc = nn.Linear(d_model, classes)
@@ -54,8 +56,8 @@ class SignTransformer(nn.Module):
         h = self.proj(x)
         if self.stem:
             y = h.transpose(1, 2)
-            y = F.relu(self.conv1(y))
-            y = F.relu(self.conv2(y))
+            y = F.relu(self.pw1(self.dw1(y)))
+            y = F.relu(self.pw2(self.dw2(y)))
             h = h + self.stem_ln(y.transpose(1, 2))
         h = h + self.pos[:, : x.shape[1]]
         for block in self.blocks:
@@ -76,10 +78,10 @@ def export_state(model: SignTransformer) -> dict[str, np.ndarray]:
         "fc.bias": model.fc.bias.detach().cpu().numpy(),
     }
     if model.stem:
-        weights["conv1.weight"] = model.conv1.weight.detach().cpu().numpy()
-        weights["conv1.bias"] = model.conv1.bias.detach().cpu().numpy()
-        weights["conv2.weight"] = model.conv2.weight.detach().cpu().numpy()
-        weights["conv2.bias"] = model.conv2.bias.detach().cpu().numpy()
+        for name in ("dw1", "pw1", "dw2", "pw2"):
+            conv = getattr(model, name)
+            weights[f"{name}.weight"] = conv.weight.detach().cpu().numpy()
+            weights[f"{name}.bias"] = conv.bias.detach().cpu().numpy()
         weights["stem_ln.weight"] = model.stem_ln.weight.detach().cpu().numpy()
         weights["stem_ln.bias"] = model.stem_ln.bias.detach().cpu().numpy()
     for index, block in enumerate(model.blocks):
@@ -137,12 +139,32 @@ def conv1d_same(seq: np.ndarray, weight: np.ndarray, bias: np.ndarray) -> np.nda
     return (np.einsum("tkc,okc->to", windows, kernel_w) + bias).astype(np.float32)
 
 
-def forward_logits(seq: np.ndarray, weights: dict[str, np.ndarray], heads: int, layers: int) -> np.ndarray:
-    h = _linear(seq, weights["proj.weight"], weights["proj.bias"])
+def conv1d_depthwise(seq: np.ndarray, weight: np.ndarray, bias: np.ndarray) -> np.ndarray:
+    """seq (T, C), weight (C, 1, K), bias (C,) -> (T, C)."""
+    time, _channels = seq.shape
+    kernel = weight.shape[-1]
+    pad = kernel // 2
+    padded = np.pad(seq, ((pad, pad), (0, 0)))
+    windows = np.stack([padded[index : index + kernel] for index in range(time)], axis=0)
+    return (np.einsum("tkc,ck->tc", windows, weight[:, 0, :]) + bias).astype(np.float32)
+
+
+def _apply_stem(h: np.ndarray, weights: dict[str, np.ndarray]) -> np.ndarray:
+    if "dw1.weight" in weights:
+        y = conv1d_depthwise(h, weights["dw1.weight"], weights["dw1.bias"])
+        y = np.maximum(conv1d_same(y, weights["pw1.weight"], weights["pw1.bias"]), 0)
+        y = conv1d_depthwise(y, weights["dw2.weight"], weights["dw2.bias"])
+        y = np.maximum(conv1d_same(y, weights["pw2.weight"], weights["pw2.bias"]), 0)
+        return h + _layer_norm(y, weights["stem_ln.weight"], weights["stem_ln.bias"])
     if "conv1.weight" in weights:
         y = np.maximum(conv1d_same(h, weights["conv1.weight"], weights["conv1.bias"]), 0)
         y = np.maximum(conv1d_same(y, weights["conv2.weight"], weights["conv2.bias"]), 0)
-        h = h + _layer_norm(y, weights["stem_ln.weight"], weights["stem_ln.bias"])
+        return h + _layer_norm(y, weights["stem_ln.weight"], weights["stem_ln.bias"])
+    return h
+
+
+def forward_logits(seq: np.ndarray, weights: dict[str, np.ndarray], heads: int, layers: int) -> np.ndarray:
+    h = _apply_stem(_linear(seq, weights["proj.weight"], weights["proj.bias"]), weights)
     h = h + weights["pos"][: seq.shape[0]]
     for index in range(layers):
         prefix = f"b{index}"

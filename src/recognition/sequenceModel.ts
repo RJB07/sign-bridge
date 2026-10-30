@@ -152,6 +152,24 @@ function layerNorm(x: Float32Array, rows: number, cols: number, weight: Float32A
   return out;
 }
 
+function conv1dDepthwise(x: Float32Array, time: number, channels: number, weight: Float32Array, bias: Float32Array, kernel: number): Float32Array {
+  const out = new Float32Array(time * channels);
+  const pad = Math.floor(kernel / 2);
+  for (let t = 0; t < time; t++) {
+    for (let c = 0; c < channels; c++) {
+      let sum = bias[c];
+      const wBase = c * kernel;
+      for (let k = 0; k < kernel; k++) {
+        const src = t + k - pad;
+        if (src < 0 || src >= time) continue;
+        sum += x[src * channels + c] * weight[wBase + k];
+      }
+      out[t * channels + c] = sum;
+    }
+  }
+  return out;
+}
+
 function conv1dSame(x: Float32Array, time: number, channels: number, weight: Float32Array, bias: Float32Array, kernel: number): Float32Array {
   const outCh = bias.length;
   const out = new Float32Array(time * outCh);
@@ -224,7 +242,20 @@ export function logitsForMember(sequence: number[][], blob: WeightBlob, dModel: 
   const projB = tensor(blob, 'proj.bias');
   const pos = tensor(blob, 'pos');
   let h = linear(flat, time, feat, proj.data, projB.data);
-  if (blob.weights['conv1.weight']) {
+  if (blob.weights['dw1.weight']) {
+    const dw1 = tensor(blob, 'dw1.weight');
+    let y = conv1dDepthwise(h, time, dModel, dw1.data, tensor(blob, 'dw1.bias').data, dw1.shape[2]);
+    const pw1 = tensor(blob, 'pw1.weight');
+    y = conv1dSame(y, time, dModel, pw1.data, tensor(blob, 'pw1.bias').data, pw1.shape[2]);
+    for (let i = 0; i < y.length; i++) if (y[i] < 0) y[i] = 0;
+    const dw2 = tensor(blob, 'dw2.weight');
+    y = conv1dDepthwise(y, time, dModel, dw2.data, tensor(blob, 'dw2.bias').data, dw2.shape[2]);
+    const pw2 = tensor(blob, 'pw2.weight');
+    y = conv1dSame(y, time, pw2.shape[1], pw2.data, tensor(blob, 'pw2.bias').data, pw2.shape[2]);
+    for (let i = 0; i < y.length; i++) if (y[i] < 0) y[i] = 0;
+    y = layerNorm(y, time, dModel, tensor(blob, 'stem_ln.weight').data, tensor(blob, 'stem_ln.bias').data);
+    for (let i = 0; i < h.length; i++) h[i] += y[i];
+  } else if (blob.weights['conv1.weight']) {
     const conv1 = tensor(blob, 'conv1.weight');
     const conv1Bias = tensor(blob, 'conv1.bias');
     let y = conv1dSame(h, time, dModel, conv1.data, conv1Bias.data, conv1.shape[2]);

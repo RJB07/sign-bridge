@@ -727,7 +727,7 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--lr-min", type=float, default=0.0)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--stem", action="store_true", help="Add a residual temporal conv stem (kernel 5, then 3) before attention.")
+    parser.add_argument("--stem", action="store_true", help="Add a residual depthwise temporal stem (kernels 5 and 3) before attention.")
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--artifact-dir", default="training/artifacts")
     parser.add_argument("--hold-test", action="store_true", help="Select on validation and do not score the test split.")
