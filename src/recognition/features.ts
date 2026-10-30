@@ -5,6 +5,8 @@
  */
 
 export const FEATURE_DIM = 273;
+/** Face-relative hands and pose, wrist-centered shape, and velocities. Keep aligned with training/features.py. */
+export const RICH_FEATURE_DIM = 294;
 export const SEQ_LEN = 32;
 export const POSE_INDEXES = [0, 11, 12, 13, 14, 15, 16];
 
@@ -56,6 +58,18 @@ export function chooseDominant(frames: FeatureFrame[], forced?: HandSide | null)
   if (motion.Left > motion.Right + 1e-6) return 'Left';
   if (motion.Right > motion.Left + 1e-6) return 'Right';
   return count.Left >= count.Right ? 'Left' : 'Right';
+}
+
+function faceOriginAndScale(hand: Landmark[] | null, pose: Landmark[] | null): { origin: Landmark; scale: number } {
+  let scale = 0;
+  if (pose) scale = xyDist(pose[11], pose[12]);
+  if (scale < 1e-4 && hand) scale = xyDist(hand[0], hand[9]);
+  if (scale < 1e-4) scale = 1;
+  let origin: Landmark;
+  if (pose) origin = { ...pose[0] };
+  else if (hand) origin = { ...hand[0] };
+  else origin = { x: 0, y: 0, z: 0 };
+  return { origin, scale };
 }
 
 function originAndScale(hand: Landmark[] | null, pose: Landmark[] | null): { origin: Landmark; scale: number } {
@@ -120,6 +134,34 @@ export function sequenceFeatures(frames: FeatureFrame[], forced?: HandSide | nul
     const posePoints = pose ? POSE_INDEXES.map((index) => pose[index]) : null;
     const poseFeat = pack(posePoints, origin, scale, mirror, 21);
     rows.push([...dom, ...nondom, ...poseFeat, ...deltaDom, ...deltaOther]);
+  }
+  return rows;
+}
+
+export function sequenceFeaturesRich(frames: FeatureFrame[], forced?: HandSide | null): number[][] {
+  const dominant = chooseDominant(frames, forced);
+  if (!dominant) return [];
+  const mirror = dominant === 'Left';
+  const domKey = dominant === 'Left' ? 'left' : 'right';
+  const otherKey = dominant === 'Left' ? 'right' : 'left';
+  const rows: number[][] = [];
+  let prevDom: number[] | null = null;
+  let prevPose: number[] | null = null;
+  for (const frame of frames) {
+    const hand = asPoints(frame[domKey], 21);
+    const other = asPoints(frame[otherKey], 21);
+    const pose = asPoints(frame.pose, 33);
+    const { origin, scale } = faceOriginAndScale(hand, pose);
+    const domFace = pack(hand, origin, scale, mirror, 63);
+    const otherFace = pack(other, origin, scale, mirror, 63);
+    const posePoints = pose ? POSE_INDEXES.map((index) => pose[index]) : null;
+    const poseFeat = pack(posePoints, origin, scale, mirror, 21);
+    const shape = hand ? pack(hand, { ...hand[0] }, scale, mirror, 63) : new Array(63).fill(0);
+    const velDom = prevDom ? domFace.map((value, index) => value - prevDom![index]) : new Array(63).fill(0);
+    const velPose = prevPose ? poseFeat.map((value, index) => value - prevPose![index]) : new Array(21).fill(0);
+    prevDom = domFace;
+    prevPose = poseFeat;
+    rows.push([...domFace, ...otherFace, ...poseFeat, ...shape, ...velDom, ...velPose]);
   }
   return rows;
 }

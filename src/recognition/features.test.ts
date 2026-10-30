@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fixture from './feature-fixture.json';
-import { resampleSequence, sequenceFeatures, type FeatureFrame, type HandSide, type Landmark } from './features';
+import richFixture from './feature-rich-fixture.json';
+import { resampleSequence, sequenceFeatures, sequenceFeaturesRich, type FeatureFrame, type HandSide, type Landmark } from './features';
 
 function toLandmarks(points: number[][] | null): Landmark[] | null {
   if (!points) return null;
@@ -18,6 +19,25 @@ describe('sequence features', () => {
       const forced: HandSide | null = testCase.forced === 'Left' || testCase.forced === 'Right' ? testCase.forced : null;
       const actual = sequenceFeatures(frames, forced);
       expect(actual.length).toBe(testCase.features.length);
+      for (let t = 0; t < actual.length; t++) {
+        for (let d = 0; d < actual[t].length; d++) {
+          expect(actual[t][d]).toBeCloseTo(testCase.features[t][d], 5);
+        }
+      }
+    }
+  });
+
+  it('matches the Python face-relative feature contract', () => {
+    for (const testCase of richFixture.cases) {
+      const frames: FeatureFrame[] = testCase.frames.map((frame) => ({
+        left: toLandmarks(frame.left),
+        right: toLandmarks(frame.right),
+        pose: toLandmarks(frame.pose),
+      }));
+      const forced: HandSide | null = testCase.forced === 'Left' || testCase.forced === 'Right' ? testCase.forced : null;
+      const actual = sequenceFeaturesRich(frames, forced);
+      expect(actual.length).toBe(testCase.features.length);
+      expect(actual[0]?.length).toBe(294);
       for (let t = 0; t < actual.length; t++) {
         for (let d = 0; d < actual[t].length; d++) {
           expect(actual[t][d]).toBeCloseTo(testCase.features[t][d], 5);

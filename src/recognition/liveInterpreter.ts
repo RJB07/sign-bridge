@@ -41,6 +41,8 @@ export type InterpreterOptions = {
   maxSegmentFrames?: number;
   previewIntervalMs?: number;
   letterPredict?: (landmarks: Landmark[]) => { label: string; confidence: number } | null;
+  /** Landmark features. The shipped model uses the legacy 273-d vector. */
+  features?: (frames: FeatureFrame[], forced?: HandSide | null) => number[][];
 };
 
 const DEFAULTS = {
@@ -83,9 +85,10 @@ function handPresent(frame: RawFrame): boolean {
  * (geometric fingerspelling) without committing every frame.
  */
 export class LiveInterpreter {
-  private readonly options: Required<Omit<InterpreterOptions, 'forcedHand' | 'letterPredict'>> & {
+  private readonly options: Required<Omit<InterpreterOptions, 'forcedHand' | 'letterPredict' | 'features'>> & {
     forcedHand: HandSide | null;
     letterPredict?: InterpreterOptions['letterPredict'];
+    features: (frames: FeatureFrame[], forced?: HandSide | null) => number[][];
   };
   private frames: RawFrame[] = [];
   private segmentStart: number | null = null;
@@ -104,7 +107,8 @@ export class LiveInterpreter {
     private readonly classifier: GlossClassifier,
     options: InterpreterOptions = {},
   ) {
-    this.options = { ...DEFAULTS, forcedHand: null, ...options };
+    const { features, ...rest } = options;
+    this.options = { ...DEFAULTS, forcedHand: null, features: features ?? sequenceFeatures, ...rest };
   }
 
   setForcedHand(hand: HandSide | null): void {
@@ -253,7 +257,7 @@ export class LiveInterpreter {
 
   private rank(start: number, end: number): { label: string; confidence: number; top: LiveSnapshot['top'] } | null {
     const slice = this.frames.slice(Math.max(0, start), Math.max(start, end));
-    const features = sequenceFeatures(slice, this.options.forcedHand);
+    const features = this.options.features(slice, this.options.forcedHand);
     if (features.length < 2) return null;
     const prediction = (this.classifier.predictPreview ?? this.classifier.predict)(features);
     const order = prediction.probabilities
@@ -265,7 +269,7 @@ export class LiveInterpreter {
 
   private commitGloss(start: number, end: number, threshold: number): Commit | null {
     const slice = this.frames.slice(Math.max(0, start), Math.max(start, end));
-    const features = sequenceFeatures(slice, this.options.forcedHand);
+    const features = this.options.features(slice, this.options.forcedHand);
     if (features.length < 2) return null;
     const prediction = this.classifier.predict(features);
     const classIndex = this.classifier.labels.indexOf(prediction.label);

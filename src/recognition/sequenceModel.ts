@@ -25,6 +25,8 @@ export type SequenceModel = {
   layers: number;
   classThresholds: number[];
   tta: boolean;
+  /** `rich` is nose-relative hands, shape, and velocity. Absent means the 273-d vector. */
+  featureLayout: 'legacy' | 'rich';
   members: WeightBlob[];
 };
 
@@ -41,6 +43,7 @@ type ModelFile = {
   classThresholds?: number[];
   tta?: boolean;
   dtype?: 'f16' | 'f32';
+  featureLayout?: 'legacy' | 'rich';
   members: WeightBlob[];
 };
 
@@ -245,6 +248,7 @@ export function modelFromJson(payload: ModelFile): SequenceModel {
     marginThreshold: payload.marginThreshold,
     classThresholds: payload.classThresholds ?? payload.labels.map(() => payload.emitThreshold),
     tta: Boolean(payload.tta),
+    featureLayout: payload.featureLayout === 'rich' ? 'rich' : 'legacy',
     featureDim: payload.featureDim,
     seqLen: payload.seqLen,
     dModel: payload.dModel,

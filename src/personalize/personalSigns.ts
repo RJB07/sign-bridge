@@ -55,7 +55,7 @@ export function matchPersonal(samples: PersonalSample[], sequence: number[][]): 
   const query = sequenceVector(sequence);
   const byLabel = new Map<string, number[][]>();
   for (const sample of samples) {
-    if (!sample.label || sample.vector.length === 0) continue;
+    if (!sample.label || sample.vector.length === 0 || sample.vector.length !== query.length) continue;
     const group = byLabel.get(sample.label) ?? [];
     group.push(sample.vector);
     byLabel.set(sample.label, group);

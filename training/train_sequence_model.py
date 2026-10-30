@@ -11,6 +11,7 @@ import argparse
 import base64
 import json
 import os
+import subprocess
 from collections import defaultdict
 from pathlib import Path
 
@@ -19,7 +20,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
-from features import FEATURE_DIM, SEQ_LEN, augment_sequence, mirror_sequence, resample_sequence
+from features import FEATURE_DIM, RICH_FEATURE_DIM, SEQ_LEN, augment_sequence, mirror_sequence, resample_sequence
 from sign_transformer import SignTransformer, export_state, forward_logits
 from splits import leakage_report
 
@@ -52,13 +53,14 @@ def round_float16(model: SignTransformer) -> SignTransformer:
 
 
 class SequenceDataset(Dataset):
-    def __init__(self, rows: list[dict], label_to_index: dict[str, int], seq_dir: Path, augment: bool, seed: int, strength: str = "base", preload: bool = True):
+    def __init__(self, rows: list[dict], label_to_index: dict[str, int], seq_dir: Path, augment: bool, seed: int, strength: str = "base", preload: bool = True, layout: str = "legacy"):
         self.rows = rows
         self.label_to_index = label_to_index
         self.seq_dir = seq_dir
         self.augment = augment
         self.seed = seed
         self.strength = strength
+        self.layout = layout
         self.arrays = None
         if preload:
             self.arrays = [np.load(seq_dir / row["npy"]) for row in rows]
@@ -72,7 +74,7 @@ class SequenceDataset(Dataset):
         row = self.rows[index]
         seq = self.arrays[index] if self.arrays is not None else np.load(self.seq_dir / row["npy"])
         if self.augment:
-            seq = augment_sequence(seq, np.random.default_rng(), strength=self.strength)
+            seq = augment_sequence(seq, np.random.default_rng(), strength=self.strength, layout=self.layout)
         seq = resample_sequence(seq, SEQ_LEN)
         x = torch.from_numpy(np.ascontiguousarray(seq))
         y = self.label_to_index[row["label"]]
@@ -139,17 +141,21 @@ def _save_resume(path: Path, model, opt, scheduler, epoch: int, best_state, best
     )
 
 
-def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int, d_model: int = 128, layers: int = 2, ff: int = 320, dropout: float = 0.1, label_smoothing: float = 0.05, mixup: float = 0.0, strength: str = "base", patience: int = 10, checkpoint_dir: Path | None = None, resume: bool = False, preload: bool = True):
+def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int, d_model: int = 128, layers: int = 2, ff: int = 320, dropout: float = 0.1, label_smoothing: float = 0.05, mixup: float = 0.0, strength: str = "base", patience: int = 10, checkpoint_dir: Path | None = None, resume: bool = False, preload: bool = True, feature_dim: int = FEATURE_DIM, layout: str = "legacy", seq_dir: Path | None = None, lr: float = 1e-3, warmup_epochs: int = 2, lr_min: float = 0.0):
     torch.manual_seed(seed)
     np.random.seed(seed)
-    model = SignTransformer(FEATURE_DIM, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=dropout).to(device)
+    if d_model % 4 != 0:
+        raise ValueError(f"d_model {d_model} must be divisible by 4 heads")
+    model = SignTransformer(feature_dim, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=dropout).to(device)
     loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=label_smoothing)
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    warmup = torch.optim.lr_scheduler.LinearLR(opt, start_factor=0.2, total_iters=2)
-    cosine = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, epochs - 2))
-    scheduler = torch.optim.lr_scheduler.SequentialLR(opt, [warmup, cosine], milestones=[2])
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    warmup_steps = max(1, warmup_epochs)
+    warmup = torch.optim.lr_scheduler.LinearLR(opt, start_factor=0.2, total_iters=warmup_steps)
+    cosine = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, epochs - warmup_steps), eta_min=lr_min)
+    scheduler = torch.optim.lr_scheduler.SequentialLR(opt, [warmup, cosine], milestones=[warmup_steps])
+    sequences = seq_dir if seq_dir is not None else cache / "seq"
     train_loader = DataLoader(
-        SequenceDataset(train_rows, label_to_index, cache / "seq", True, seed, strength=strength, preload=preload),
+        SequenceDataset(train_rows, label_to_index, sequences, True, seed, strength=strength, preload=preload, layout=layout),
         batch_size=batch_size,
         shuffle=True,
         num_workers=0,
@@ -257,18 +263,19 @@ def evaluate(model, loader, device, tta: bool = False) -> tuple[np.ndarray, np.n
     return np.concatenate(logits_all), np.concatenate(target_all)
 
 
-def train_student(teachers, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int = 18, batch_size: int = 64):
+def train_student(teachers, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int = 18, batch_size: int = 64, feature_dim: int = FEATURE_DIM, d_model: int = 64, layers: int = 2, ff: int = 160, layout: str = "legacy", strength: str = "base", seq_dir: Path | None = None, patience: int = 6):
     """Distill the ensemble into one smaller transformer for phones.
 
     Teacher logits are cached on the clean training sequences. The student
     still sees augmented copies of those sequences, with the clean soft target.
     """
     torch.manual_seed(7)
-    student = SignTransformer(FEATURE_DIM, n_classes, d_model=64, heads=4, layers=2, ff=160, dropout=0.05).to(device)
+    student = SignTransformer(feature_dim, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=0.05).to(device)
     for teacher in teachers:
         teacher.eval()
+    sequences = seq_dir if seq_dir is not None else cache / "seq"
     clean = DataLoader(
-        SequenceDataset(train_rows, label_to_index, cache / "seq", False, 7),
+        SequenceDataset(train_rows, label_to_index, sequences, False, 7, layout=layout),
         batch_size=batch_size,
         shuffle=False,
     )
@@ -278,7 +285,7 @@ def train_student(teachers, n_classes: int, class_weights: np.ndarray, train_row
             x = x.to(device)
             soft_rows.append(torch.stack([teacher(x) for teacher in teachers]).mean(0).cpu())
     soft_all = torch.cat(soft_rows, dim=0)
-    base = SequenceDataset(train_rows, label_to_index, cache / "seq", True, 7)
+    base = SequenceDataset(train_rows, label_to_index, sequences, True, 7, strength=strength, layout=layout)
 
     class DistillSet(Dataset):
         def __len__(self) -> int:
@@ -322,7 +329,7 @@ def train_student(teachers, n_classes: int, class_weights: np.ndarray, train_row
             stale = 0
         else:
             stale += 1
-            if stale >= 6:
+            if stale >= patience:
                 break
     student.load_state_dict(best_state)
     student.eval()
@@ -334,6 +341,26 @@ def ensemble_logits(models, loader, device, tta: bool = True):
     target = packs[0][1]
     logits = np.mean([pack[0] for pack in packs], axis=0)
     return logits, target
+
+
+def validation_choice(models, val_loader, device) -> dict:
+    """Pick mirror test-time augmentation from validation only."""
+    val_plain, val_y = ensemble_logits(models, val_loader, device, tta=False)
+    val_tta, _val_y_tta = ensemble_logits(models, val_loader, device, tta=True)
+    plain = ranked_accuracy(val_plain, val_y, 1)
+    tta = ranked_accuracy(val_tta, val_y, 1)
+    use_tta = tta >= plain
+    logits = val_tta if use_tta else val_plain
+    return {
+        "models": models,
+        "use_tta": use_tta,
+        "val_logits": logits,
+        "val_y": val_y,
+        "val_top1": tta if use_tta else plain,
+        "val_top1_plain": plain,
+        "val_top1_tta": tta,
+        "val_top5": ranked_accuracy(logits, val_y, 5),
+    }
 
 
 def score_models(models, val_loader, test_loader, device) -> dict:
@@ -443,6 +470,214 @@ def choose_threshold(logits: np.ndarray, target: np.ndarray) -> dict:
     return chosen
 
 
+ROOT = Path(__file__).resolve().parents[1]
+PREVIOUS_VAL_TOP1 = 0.5222
+PREVIOUS_TEST_TOP1 = 0.5388
+
+
+def _layout_dim(layout: str) -> int:
+    if layout == "rich":
+        return RICH_FEATURE_DIM
+    if layout == "legacy":
+        return FEATURE_DIM
+    raise ValueError(layout)
+
+
+def write_browser_file(path: Path, models, labels: list[str], dtype: str, tta: bool, feature_dim: int, feature_layout: str, emit: float, margin: float, class_thresholds: list[float]) -> None:
+    members = []
+    for model in models:
+        weights = export_state(model)
+        if dtype == "f16":
+            weights = {key: np.asarray(value, dtype=np.float16).astype(np.float32) for key, value in weights.items()}
+        members.append(
+            {
+                "weights": {key: encode_weights(value, dtype) for key, value in weights.items()},
+                "weightShapes": {key: list(value.shape) for key, value in weights.items()},
+            }
+        )
+    payload = {
+        "format": "signbridge-tx-v1",
+        "featureDim": feature_dim,
+        "seqLen": SEQ_LEN,
+        "dModel": models[0].d_model,
+        "heads": models[0].heads,
+        "layers": len(models[0].blocks),
+        "dtype": dtype,
+        "featureLayout": feature_layout,
+        "labels": labels,
+        "emitThreshold": emit,
+        "marginThreshold": margin,
+        "classThresholds": class_thresholds,
+        "tta": tta,
+        "members": members,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def browser_latency(model_json: Path, runs: int = 12) -> dict:
+    """Time the TypeScript recognizer, which is the browser commit path."""
+    esbuild = ROOT / "node_modules" / ".bin" / "esbuild"
+    if not esbuild.exists():
+        raise RuntimeError("esbuild is not installed; run npm ci before measuring browser latency")
+    bundle = Path("/tmp/signbridge-bench.mjs")
+    subprocess.run(
+        [
+            str(esbuild),
+            str(ROOT / "scripts" / "bench-sequence.ts"),
+            "--bundle",
+            "--platform=node",
+            "--format=esm",
+            f"--outfile={bundle}",
+        ],
+        check=True,
+        cwd=ROOT,
+    )
+    completed = subprocess.run(
+        ["node", str(bundle), str(model_json), str(runs)],
+        check=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
+def _latency_ok(sample: dict, preview_ms: float, commit_ms: float) -> bool:
+    return float(sample["previewMs"]) <= preview_ms and float(sample["commitMs"]) <= commit_ms
+
+
+def _apply_dtype(models, val_loader, device):
+    full = validation_choice(models, val_loader, device)
+    rounded_models = [round_float16(model) for model in models]
+    rounded = validation_choice(rounded_models, val_loader, device)
+    if rounded["val_top1"] >= full["val_top1"] - 0.005:
+        rounded["dtype"] = "f16"
+        return rounded
+    full["dtype"] = "f32"
+    return full
+
+
+def hold_out_selection(args, members, history, labels, class_weights, splits, label_to_index, cache, seq_dir, val_loader, device, feature_dim: int, artifact: Path) -> None:
+    """Choose TTA, float16, and a student on validation. Do not read the test split."""
+    chosen = _apply_dtype(members, val_loader, device)
+    threshold = choose_threshold(chosen["val_logits"], chosen["val_y"])
+    class_thresholds = per_class_thresholds(chosen["val_logits"], chosen["val_y"], threshold["threshold"])
+    artifact.mkdir(parents=True, exist_ok=True)
+    (artifact / "history.json").write_text(json.dumps(history), encoding="utf-8")
+    probe = Path("/tmp/signbridge-latency-probe.json")
+    write_browser_file(
+        probe,
+        chosen["models"],
+        labels,
+        chosen["dtype"],
+        chosen["use_tta"],
+        feature_dim,
+        args.feature_layout,
+        threshold["threshold"],
+        threshold["margin"],
+        class_thresholds,
+    )
+    latency = browser_latency(probe)
+    latency_ok = _latency_ok(latency, args.latency_preview_ms, args.latency_commit_ms)
+    print({"teacherVal": round(chosen["val_top1"], 4), "teacherLatency": latency, "latencyOk": latency_ok}, flush=True)
+    ship_student = False
+    student_val = None
+    if args.distill_if_slow and not latency_ok:
+        student, student_history = train_student(
+            members,
+            len(labels),
+            class_weights,
+            splits["train"],
+            label_to_index,
+            cache,
+            val_loader,
+            device,
+            epochs=args.student_epochs,
+            batch_size=args.batch_size,
+            feature_dim=feature_dim,
+            d_model=args.student_hidden,
+            layers=args.student_layers,
+            ff=args.student_ff,
+            layout=args.feature_layout,
+            strength=args.augment,
+            seq_dir=seq_dir,
+        )
+        history.extend(student_history)
+        student_choice = _apply_dtype([student], val_loader, device)
+        student_threshold = choose_threshold(student_choice["val_logits"], student_choice["val_y"])
+        student_floors = per_class_thresholds(student_choice["val_logits"], student_choice["val_y"], student_threshold["threshold"])
+        write_browser_file(
+            probe,
+            student_choice["models"],
+            labels,
+            student_choice["dtype"],
+            student_choice["use_tta"],
+            feature_dim,
+            args.feature_layout,
+            student_threshold["threshold"],
+            student_threshold["margin"],
+            student_floors,
+        )
+        student_latency = browser_latency(probe)
+        student_ok = _latency_ok(student_latency, args.latency_preview_ms, args.latency_commit_ms)
+        student_val = student_choice["val_top1"]
+        print({"studentVal": round(student_val, 4), "studentLatency": student_latency, "latencyOk": student_ok}, flush=True)
+        torch.save(student_choice["models"][0].state_dict(), artifact / "student.pt")
+        if student_ok:
+            chosen = student_choice
+            threshold = student_threshold
+            class_thresholds = student_floors
+            latency = student_latency
+            latency_ok = True
+            ship_student = True
+    selection = {
+        "experiment": args.experiment,
+        "featureLayout": args.feature_layout,
+        "featureDim": feature_dim,
+        "dModel": chosen["models"][0].d_model,
+        "layers": len(chosen["models"][0].blocks),
+        "ff": chosen["models"][0].ff,
+        "heads": chosen["models"][0].heads,
+        "useTta": chosen["use_tta"],
+        "dtype": chosen["dtype"],
+        "shipStudent": ship_student,
+        "valTop1": chosen["val_top1"],
+        "valTop5": chosen["val_top5"],
+        "valTop1Plain": chosen["val_top1_plain"],
+        "valTop1Tta": chosen["val_top1_tta"],
+        "studentValTop1": student_val,
+        "threshold": threshold["threshold"],
+        "margin": threshold["margin"],
+        "classThresholds": class_thresholds,
+        "latency": latency,
+        "latencyOk": latency_ok,
+        "latencyPreviewMs": args.latency_preview_ms,
+        "latencyCommitMs": args.latency_commit_ms,
+        "seeds": [int(part) for part in args.seeds.split(",") if part.strip() != ""],
+        "index": args.index,
+        "seqSubdir": seq_dir.name,
+        "augment": args.augment,
+        "mixup": args.mixup,
+        "labelSmoothing": args.label_smoothing,
+        "dropout": args.dropout,
+        "epochs": args.epochs,
+        "warmup": args.warmup,
+        "lr": args.lr,
+        "testReported": False,
+        "previousValidationTop1": PREVIOUS_VAL_TOP1,
+        "previousTestTop1": PREVIOUS_TEST_TOP1,
+    }
+    artifact.mkdir(parents=True, exist_ok=True)
+    (artifact / "selection.json").write_text(json.dumps(selection, indent=2), encoding="utf-8")
+    (artifact / "history.json").write_text(json.dumps(history), encoding="utf-8")
+    metrics_dir = Path("training/metrics")
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    (metrics_dir / f"{args.experiment}-val.json").write_text(json.dumps(selection, indent=2), encoding="utf-8")
+    print(json.dumps({"holdTest": True, "valTop1": round(chosen["val_top1"], 4), "valTop5": round(chosen["val_top5"], 4), "shipStudent": ship_student, "latencyOk": latency_ok, "dtype": chosen["dtype"], "tta": chosen["use_tta"]}, indent=2))
+    print("Validation selection is saved. The test split was not scored.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache", default="training/cache")
@@ -455,14 +690,32 @@ def main() -> None:
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--label-smoothing", type=float, default=0.05)
     parser.add_argument("--mixup", type=float, default=0.0)
-    parser.add_argument("--augment", choices=("base", "strong"), default="base")
+    parser.add_argument("--augment", choices=("base", "strong", "rich"), default="base")
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--seeds", default="0,1,2")
     parser.add_argument("--experiment", default="default")
     parser.add_argument("--skip-student", action="store_true")
     parser.add_argument("--resume", action="store_true", help="Continue finished seeds and in-progress epoch checkpoints under training/artifacts.")
     parser.add_argument("--no-preload", action="store_true", help="Read sequences from disk each step. Use this when the training cache does not fit in memory.")
+    parser.add_argument("--feature-layout", choices=("legacy", "rich"), default="legacy")
+    parser.add_argument("--seq-subdir", default="", help="Sequence folder under the cache. Defaults to seq-rich or seq.")
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr-min", type=float, default=0.0)
+    parser.add_argument("--warmup", type=int, default=2)
+    parser.add_argument("--artifact-dir", default="training/artifacts")
+    parser.add_argument("--hold-test", action="store_true", help="Select on validation and do not score the test split.")
+    parser.add_argument("--report-test", action="store_true", help="Score the saved validation selection on the test split once.")
+    parser.add_argument("--student-hidden", type=int, default=128)
+    parser.add_argument("--student-layers", type=int, default=2)
+    parser.add_argument("--student-ff", type=int, default=320)
+    parser.add_argument("--student-epochs", type=int, default=24)
+    parser.add_argument("--latency-preview-ms", type=float, default=50.0, help="Preview is one member and no mirror. The live interval is 120ms.")
+    parser.add_argument("--latency-commit-ms", type=float, default=300.0, help="Commit runs every member and mirror TTA once per sign.")
+    parser.add_argument("--distill-if-slow", action="store_true")
     args = parser.parse_args()
+    if args.report_test:
+        report_test(args)
+        return
     seeds = [int(part) for part in args.seeds.split(",") if part.strip() != ""]
 
     cache = Path(args.cache)
@@ -481,27 +734,32 @@ def main() -> None:
         raise SystemExit(f"Refusing to train with signer leakage: {leakage}")
 
     device = torch.device("cpu")
-    torch.set_num_threads(4)
+    torch.set_num_threads(os.cpu_count() or 4)
+    feature_dim = _layout_dim(args.feature_layout)
+    seq_dir = cache / (args.seq_subdir or ("seq-rich" if args.feature_layout == "rich" else "seq"))
     counts = np.bincount([label_to_index[row["label"]] for row in splits["train"]], minlength=len(labels))
     class_weights = np.sqrt(counts.sum() / np.maximum(counts, 1) / len(labels)).astype(np.float32)
     preload = not args.no_preload
+    eval_batch = max(args.batch_size, 256)
     val_loader = DataLoader(
-        SequenceDataset(splits["validation"], label_to_index, cache / "seq", False, 2, preload=preload),
-        batch_size=args.batch_size,
+        SequenceDataset(splits["validation"], label_to_index, seq_dir, False, 2, preload=preload, layout=args.feature_layout),
+        batch_size=eval_batch,
     )
-    test_loader = DataLoader(
-        SequenceDataset(splits["test"], label_to_index, cache / "seq", False, 3, preload=preload),
-        batch_size=args.batch_size,
-    )
+    test_loader = None
+    if not args.hold_test:
+        test_loader = DataLoader(
+            SequenceDataset(splits["test"], label_to_index, seq_dir, False, 3, preload=preload, layout=args.feature_layout),
+            batch_size=eval_batch,
+        )
     members = []
     history = []
-    artifact = Path("training/artifacts")
+    artifact = Path(args.artifact_dir)
     artifact.mkdir(parents=True, exist_ok=True)
     for seed in seeds:
         final_path = artifact / f"member-{seed}.pt"
         hist_path = artifact / f"member-{seed}-history.json"
         if args.resume and final_path.exists() and hist_path.exists():
-            model = SignTransformer(FEATURE_DIM, len(labels), d_model=args.hidden, heads=4, layers=args.layers, ff=args.ff, dropout=0.0).to(device)
+            model = SignTransformer(feature_dim, len(labels), d_model=args.hidden, heads=4, layers=args.layers, ff=args.ff, dropout=0.0).to(device)
             model.load_state_dict(torch.load(final_path, map_location=device, weights_only=True))
             model.eval()
             member_history = json.loads(hist_path.read_text(encoding="utf-8"))
@@ -531,11 +789,21 @@ def main() -> None:
             checkpoint_dir=artifact,
             resume=args.resume,
             preload=preload,
+            feature_dim=feature_dim,
+            layout=args.feature_layout,
+            seq_dir=seq_dir,
+            lr=args.lr,
+            warmup_epochs=args.warmup,
+            lr_min=args.lr_min,
         )
         members.append(model)
         history.extend(member_history)
         torch.save(model.state_dict(), final_path)
         hist_path.write_text(json.dumps(member_history), encoding="utf-8")
+
+    if args.hold_test:
+        hold_out_selection(args, members, history, labels, class_weights, splits, label_to_index, cache, seq_dir, val_loader, device, feature_dim, artifact)
+        return
 
     ensemble = score_models(members, val_loader, test_loader, device)
     print(
@@ -552,7 +820,19 @@ def main() -> None:
         print({"student": "skipped"}, flush=True)
     else:
         student, student_history = train_student(
-            members, len(labels), class_weights, splits["train"], label_to_index, cache, val_loader, device, batch_size=args.batch_size
+            members,
+            len(labels),
+            class_weights,
+            splits["train"],
+            label_to_index,
+            cache,
+            val_loader,
+            device,
+            batch_size=args.batch_size,
+            feature_dim=feature_dim,
+            layout=args.feature_layout,
+            strength=args.augment,
+            seq_dir=seq_dir,
         )
         history.extend(student_history)
         student_score = score_models([student], val_loader, test_loader, device)
@@ -763,7 +1043,8 @@ def main() -> None:
         "language": "ase",
         "outputLanguage": "en",
         "task": "isolated-asl-gloss-to-english",
-        "featureDim": FEATURE_DIM,
+        "featureDim": feature_dim,
+        "featureLayout": args.feature_layout,
         "seqLen": SEQ_LEN,
         "dModel": final_models[0].d_model,
         "heads": final_models[0].heads,
@@ -797,7 +1078,7 @@ def main() -> None:
     parity = {
         "input": encode_f32(sample[0].numpy()),
         "logits": encode_f32(ref_logits),
-        "inputShape": [SEQ_LEN, FEATURE_DIM],
+        "inputShape": [SEQ_LEN, feature_dim],
     }
     (public / "parity.json").write_text(json.dumps(parity), encoding="utf-8")
 
@@ -807,7 +1088,7 @@ def main() -> None:
         for row in splits["test"]:
             if len(correct_by_label) >= 8 and row["label"] not in wanted:
                 continue
-            seq = resample_sequence(np.load(cache / "seq" / row["npy"]), SEQ_LEN)
+            seq = resample_sequence(np.load(seq_dir / row["npy"]), SEQ_LEN)
             batch = torch.from_numpy(seq).unsqueeze(0).to(device)
             parts = [member(batch).cpu().numpy()[0] for member in final_models]
             if use_tta:
@@ -852,6 +1133,275 @@ def main() -> None:
         )
     }
     print(json.dumps(summary, indent=2))
+
+
+def report_test(args) -> None:
+    """Score the validation selection once. TTA and the gate stay as validation chose them."""
+    artifact = Path(args.artifact_dir)
+    selection_path = artifact / "selection.json"
+    if not selection_path.exists():
+        raise SystemExit(f"No validation selection at {selection_path}")
+    selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    if selection.get("testReported"):
+        raise SystemExit("This selection already has a test score. Refusing a second look.")
+
+    cache = Path(args.cache)
+    rows = load_index(cache / selection.get("index", args.index))
+    labels = sorted({row["label"] for row in rows if row["split"] == "train"})
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    splits = {
+        name: [row for row in rows if row["split"] == name and row["label"] in label_to_index]
+        for name in ("train", "validation", "test")
+    }
+    leakage = leakage_report(rows)
+    if any(leakage.values()):
+        raise SystemExit(f"Refusing to score with signer leakage: {leakage}")
+    feature_dim = int(selection["featureDim"])
+    layout = selection["featureLayout"]
+    seq_dir = cache / selection["seqSubdir"]
+    device = torch.device("cpu")
+    torch.set_num_threads(os.cpu_count() or 4)
+    test_loader = DataLoader(
+        SequenceDataset(splits["test"], label_to_index, seq_dir, False, 3, preload=not args.no_preload, layout=layout),
+        batch_size=max(args.batch_size, 256),
+    )
+
+    def load_model(path: Path, d_model: int, layers: int, ff: int) -> SignTransformer:
+        model = SignTransformer(feature_dim, len(labels), d_model=d_model, heads=int(selection["heads"]), layers=layers, ff=ff, dropout=0.0)
+        model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
+        model.eval()
+        return model
+
+    if selection["shipStudent"]:
+        models = [load_model(artifact / "student.pt", int(selection["dModel"]), int(selection["layers"]), int(selection["ff"]))]
+    else:
+        models = [
+            load_model(artifact / f"member-{seed}.pt", int(selection["dModel"]), int(selection["layers"]), int(selection["ff"]))
+            for seed in selection["seeds"]
+        ]
+    if selection["dtype"] == "f16":
+        models = [round_float16(model) for model in models]
+    use_tta = bool(selection["useTta"])
+    test_logits, test_y = ensemble_logits(models, test_loader, device, tta=use_tta)
+    test_top1 = ranked_accuracy(test_logits, test_y, 1)
+    test_top5 = ranked_accuracy(test_logits, test_y, min(5, len(labels)))
+    test_per_class = per_class(test_logits, test_y, labels)
+    macro_recall = float(np.mean([row["recall"] for row in test_per_class if row["support"] > 0])) if test_per_class else 0.0
+    probs = torch.softmax(torch.from_numpy(test_logits), dim=1).numpy()
+    pred_order = np.argsort(-probs, axis=1)
+    pred = pred_order[:, 0]
+    conf = probs[np.arange(len(probs)), pred]
+    margin = conf - probs[np.arange(len(probs)), pred_order[:, 1]]
+    class_thresholds = [float(value) for value in selection["classThresholds"]]
+    class_floor = np.array([class_thresholds[int(label)] for label in pred])
+    take = (conf >= class_floor) & (margin >= float(selection["margin"]))
+    test_at_emit = {
+        "threshold": selection["threshold"],
+        "margin": selection["margin"],
+        "perClass": True,
+        "precision": round(float((pred[take] == test_y[take]).mean()), 4) if take.any() else 0.0,
+        "coverage": round(float(take.mean()), 4),
+    }
+    selection["testReported"] = True
+    selection["testTop1"] = round(test_top1, 4)
+    selection["testTop5"] = round(test_top5, 4)
+    selection["testMacroRecall"] = round(macro_recall, 4)
+    selection["testAtEmit"] = test_at_emit
+    selection_path.write_text(json.dumps(selection, indent=2), encoding="utf-8")
+
+    probe = Path("/tmp/signbridge-latency-probe.json")
+    write_browser_file(
+        probe,
+        models,
+        labels,
+        selection["dtype"],
+        use_tta,
+        feature_dim,
+        layout,
+        float(selection["threshold"]),
+        float(selection["margin"]),
+        class_thresholds,
+    )
+    latency = browser_latency(probe)
+    latency_ok = _latency_ok(latency, float(selection.get("latencyPreviewMs", args.latency_preview_ms)), float(selection.get("latencyCommitMs", args.latency_commit_ms)))
+    shipped_path = Path("public/models/asl-en-sequence.json")
+    baseline = PREVIOUS_TEST_TOP1
+    if shipped_path.exists():
+        try:
+            baseline = float(json.loads(shipped_path.read_text(encoding="utf-8"))["metrics"]["testTop1"])
+        except (KeyError, TypeError, json.JSONDecodeError):
+            baseline = PREVIOUS_TEST_TOP1
+    replaced = bool(test_top1 > baseline + 1e-4 and latency_ok)
+    focus = ["hello", "thankyou", "please", "yes", "no", "water", "mom", "dad"]
+    focus_rows = [row for row in test_per_class if row["label"] in focus]
+    signers = defaultdict(set)
+    for row in rows:
+        signers[row["split"]].add(row["signer"])
+    kind = "distilled student" if selection["shipStudent"] else f"ensemble of {len(models)}"
+    metrics = {
+        "task": "isolated ASL gloss to English",
+        "language": "ase",
+        "outputLanguage": "en",
+        "architecture": (
+            f"{kind}, d={models[0].d_model}, layers={len(models[0].blocks)}, dtype={selection['dtype']}, "
+            f"tta={str(use_tta).lower()}, augment={selection['augment']}, mixup={selection['mixup']}, "
+            f"labelSmoothing={selection['labelSmoothing']}, features={layout}"
+        ),
+        "dataset": (
+            "PopSign ASL v1.0 game and non-game frames (CC BY 4.0, sign/popsign-images), "
+            "MediaPipe Holistic landmarks. Same 250 glosses as Google ASL Signs. "
+            "Non-game clips are training only and exclude game validation and test signers. "
+            "ASL Citizen and WLASL were not used because their licenses do not allow shipping derived weights."
+        ),
+        "split": "official PopSign train/validation/test, signer-disjoint",
+        "signerLeakage": leakage,
+        "signers": {name: sorted(values) for name, values in signers.items()},
+        "classes": len(labels),
+        "counts": {name: len(items) for name, items in splits.items()},
+        "testTop1": round(test_top1, 4),
+        "testTop5": round(test_top5, 4),
+        "testMacroRecall": round(macro_recall, 4),
+        "validationTop1": round(float(selection["valTop1"]), 4),
+        "validationTop5": round(float(selection["valTop5"]), 4),
+        "chanceTop1": round(1 / len(labels), 4),
+        "dtype": selection["dtype"],
+        "tta": use_tta,
+        "featureLayout": layout,
+        "latency": latency,
+        "latencyOk": latency_ok,
+        "shippedStudent": selection["shipStudent"],
+        "emit": {"threshold": selection["threshold"], "margin": selection["margin"]},
+        "testAtEmit": test_at_emit,
+        "focusGlosses": focus_rows,
+        "perClassTest": test_per_class,
+        "previousShippedTestTop1": baseline,
+        "previousValidationTop1": PREVIOUS_VAL_TOP1,
+        "replacedShippedModel": replaced,
+        "experiment": selection,
+        "notIncluded": {
+            "help": "Not one of the 250 PopSign / Google ASL Signs glosses.",
+            "aslCitizen": "Microsoft research license forbids distributing the data or modifications.",
+            "wlasl": "Video rights are research-only and not redistributable.",
+        },
+    }
+    metrics_dir = Path("training/metrics")
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    (metrics_dir / "asl_en_run.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    experiment_row = {
+        "name": selection["experiment"],
+        "testTop1": metrics["testTop1"],
+        "testTop5": metrics["testTop5"],
+        "validationTop1": metrics["validationTop1"],
+        "validationTop5": metrics["validationTop5"],
+        "members": len(models),
+        "dModel": models[0].d_model,
+        "layers": len(models[0].blocks),
+        "dtype": selection["dtype"],
+        "tta": use_tta,
+        "shipped": replaced,
+        "latencyOk": latency_ok,
+        "featureLayout": layout,
+        "counts": metrics["counts"],
+        "augment": selection["augment"],
+        "mixup": selection["mixup"],
+        "labelSmoothing": selection["labelSmoothing"],
+    }
+    with (metrics_dir / "experiments.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(experiment_row) + "\n")
+    print(json.dumps({"testTop1": metrics["testTop1"], "testTop5": metrics["testTop5"], "validationTop1": metrics["validationTop1"], "latencyOk": latency_ok, "replacedShippedModel": replaced, "baseline": baseline}, indent=2))
+    if not replaced:
+        reason = "latency" if test_top1 > baseline + 1e-4 else "test top-1"
+        print(f"Kept the existing shipped model. This run did not clear the ship rule ({reason}).")
+        return
+
+    (metrics_dir / "asl_en_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    sample = next(iter(test_loader))[0][:1]
+    with torch.no_grad():
+        torch_logits = np.mean([model(sample.to(device)).cpu().numpy()[0] for model in models], axis=0)
+    exported = []
+    for model in models:
+        weights = export_state(model)
+        if selection["dtype"] == "f16":
+            weights = {key: np.asarray(value, dtype=np.float16).astype(np.float32) for key, value in weights.items()}
+        exported.append(weights)
+    ref_logits = np.mean(
+        [forward_logits(sample[0].numpy(), weights, models[0].heads, len(models[0].blocks)) for weights in exported],
+        axis=0,
+    )
+    max_diff = float(np.max(np.abs(torch_logits - ref_logits)))
+    if max_diff > 1e-3:
+        raise SystemExit(f"NumPy reference drifted from PyTorch by {max_diff}")
+    write_browser_file(
+        shipped_path,
+        models,
+        labels,
+        selection["dtype"],
+        use_tta,
+        feature_dim,
+        layout,
+        float(selection["threshold"]),
+        float(selection["margin"]),
+        class_thresholds,
+    )
+    shipped = json.loads(shipped_path.read_text(encoding="utf-8"))
+    shipped.update(
+        {
+            "language": "ase",
+            "outputLanguage": "en",
+            "task": "isolated-asl-gloss-to-english",
+            "dataset": {
+                "name": "PopSign ASL v1.0",
+                "subset": "game frames, plus non-game training clips whose signers are outside the game validation and test partitions",
+                "license": "CC BY 4.0",
+                "url": "https://signdata.cc.gatech.edu/",
+                "huggingface": "https://huggingface.co/datasets/sign/popsign-images",
+                "landmarkModel": MODEL_NOTE,
+                "note": "Same gloss list as the Google Isolated Sign Language Recognition / ASL Signs release.",
+            },
+            "metrics": {
+                "testTop1": metrics["testTop1"],
+                "testTop5": metrics["testTop5"],
+                "testMacroRecall": metrics["testMacroRecall"],
+                "validationTop1": metrics["validationTop1"],
+                "counts": metrics["counts"],
+                "classes": len(labels),
+            },
+        }
+    )
+    shipped_path.write_text(json.dumps(shipped), encoding="utf-8")
+    (Path("public/models") / "parity.json").write_text(
+        json.dumps({"input": encode_f32(sample[0].numpy()), "logits": encode_f32(ref_logits), "inputShape": [SEQ_LEN, feature_dim]}),
+        encoding="utf-8",
+    )
+    correct_by_label: dict[str, dict] = {}
+    wanted = ["hello", "thankyou", "please", "yes", "no", "water", "mom", "dad", "book", "bye"]
+    with torch.no_grad():
+        for row in splits["test"]:
+            if len(correct_by_label) >= 8 and row["label"] not in wanted:
+                continue
+            seq = resample_sequence(np.load(seq_dir / row["npy"]), SEQ_LEN)
+            batch = torch.from_numpy(seq).unsqueeze(0).to(device)
+            parts = [member(batch).cpu().numpy()[0] for member in models]
+            if use_tta:
+                flipped = torch.from_numpy(mirror_sequence(seq)).unsqueeze(0).to(device)
+                parts.extend(member(flipped).cpu().numpy()[0] for member in models)
+            guess = labels[int(np.mean(parts, axis=0).argmax())]
+            if guess == row["label"] and row["label"] not in correct_by_label:
+                if row["label"] in wanted or len(correct_by_label) < 8:
+                    correct_by_label[row["label"]] = {"label": row["label"], "signer": row["signer"], "features": encode_f32(seq)}
+    order = ["hello", "thankyou", "please", "yes", "no", "water", "mom", "dad"]
+    clips = [correct_by_label[label] for label in order if label in correct_by_label]
+    clips += [correct_by_label[label] for label in labels if label in correct_by_label and label not in order]
+    (Path("public/models") / "demo-clips.json").write_text(
+        json.dumps(
+            {
+                "note": "Normalized landmark features from held-out PopSign test signers the ensemble classifies correctly. CC BY 4.0. Not for identifying people.",
+                "clips": clips[:8],
+            }
+        ),
+        encoding="utf-8",
+    )
+    print("Replaced the shipped model.")
 
 
 MODEL_NOTE = (

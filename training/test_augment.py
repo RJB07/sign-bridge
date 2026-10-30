@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from features import FEATURE_DIM, augment_sequence, mirror_sequence
+from features import FEATURE_DIM, RICH_FEATURE_DIM, augment_sequence, mirror_sequence
 
 
 class AugmentTests(unittest.TestCase):
@@ -36,6 +36,16 @@ class AugmentTests(unittest.TestCase):
             out = augment_sequence(seq, rng, strength="strong")
             self.assertEqual(out.shape[1], FEATURE_DIM)
             self.assertGreaterEqual(out.shape[0], 3)
+
+    def test_rich_augment_keeps_both_layouts(self):
+        rng = np.random.default_rng(4)
+        for width, layout in ((FEATURE_DIM, "legacy"), (RICH_FEATURE_DIM, "rich")):
+            seq = rng.normal(size=(16, width)).astype(np.float32)
+            for _ in range(6):
+                out = augment_sequence(seq, rng, strength="rich", layout=layout)
+                self.assertEqual(out.shape[1], width)
+                self.assertGreaterEqual(out.shape[0], 3)
+                self.assertTrue(np.isfinite(out).all())
 
 
 if __name__ == "__main__":
