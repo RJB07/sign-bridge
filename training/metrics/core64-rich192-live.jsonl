@@ -92,3 +92,5 @@
 {"seed": 2, "epoch": 44, "trainLoss": 1.2931, "trainTop1": 0.8234, "valTop1": 0.4871, "valTop5": 0.7458}
 {"seed": 2, "epoch": 45, "trainLoss": 1.282, "trainTop1": 0.8262, "valTop1": 0.4923, "valTop5": 0.751}
 {"seed": 2, "epoch": 46, "trainLoss": 1.2769, "trainTop1": 0.8305, "valTop1": 0.4891, "valTop5": 0.748}
+{"seed": 2, "epoch": 47, "trainLoss": 1.2725, "trainTop1": 0.8293, "valTop1": 0.4908, "valTop5": 0.7469}
+{"seed": 2, "epoch": 48, "trainLoss": 1.2635, "trainTop1": 0.8318, "valTop1": 0.493, "valTop5": 0.7478}
