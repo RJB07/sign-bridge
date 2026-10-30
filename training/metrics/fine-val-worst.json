@@ -1,0 +1,146 @@
+{
+  "top1": 0.5552671425481289,
+  "top5": 0.8072680077871512,
+  "worst": [
+    {
+      "label": "finger",
+      "support": 20,
+      "predicted": 13,
+      "precision": 0.0769,
+      "recall": 0.05
+    },
+    {
+      "label": "pen",
+      "support": 19,
+      "predicted": 20,
+      "precision": 0.05,
+      "recall": 0.0526
+    },
+    {
+      "label": "mouth",
+      "support": 18,
+      "predicted": 8,
+      "precision": 0.125,
+      "recall": 0.0556
+    },
+    {
+      "label": "go",
+      "support": 16,
+      "predicted": 22,
+      "precision": 0.0455,
+      "recall": 0.0625
+    },
+    {
+      "label": "read",
+      "support": 16,
+      "predicted": 6,
+      "precision": 0.1667,
+      "recall": 0.0625
+    },
+    {
+      "label": "glasswindow",
+      "support": 20,
+      "predicted": 15,
+      "precision": 0.1333,
+      "recall": 0.1
+    },
+    {
+      "label": "sleep",
+      "support": 18,
+      "predicted": 9,
+      "precision": 0.2222,
+      "recall": 0.1111
+    },
+    {
+      "label": "wet",
+      "support": 17,
+      "predicted": 8,
+      "precision": 0.25,
+      "recall": 0.1176
+    },
+    {
+      "label": "night",
+      "support": 20,
+      "predicted": 6,
+      "precision": 0.5,
+      "recall": 0.15
+    },
+    {
+      "label": "after",
+      "support": 18,
+      "predicted": 17,
+      "precision": 0.1765,
+      "recall": 0.1667
+    },
+    {
+      "label": "on",
+      "support": 18,
+      "predicted": 15,
+      "precision": 0.2,
+      "recall": 0.1667
+    },
+    {
+      "label": "cloud",
+      "support": 17,
+      "predicted": 12,
+      "precision": 0.25,
+      "recall": 0.1765
+    },
+    {
+      "label": "will",
+      "support": 17,
+      "predicted": 14,
+      "precision": 0.2143,
+      "recall": 0.1765
+    },
+    {
+      "label": "close",
+      "support": 20,
+      "predicted": 14,
+      "precision": 0.2857,
+      "recall": 0.2
+    },
+    {
+      "label": "ride",
+      "support": 19,
+      "predicted": 20,
+      "precision": 0.2,
+      "recall": 0.2105
+    },
+    {
+      "label": "face",
+      "support": 14,
+      "predicted": 12,
+      "precision": 0.25,
+      "recall": 0.2143
+    },
+    {
+      "label": "haveto",
+      "support": 16,
+      "predicted": 20,
+      "precision": 0.2,
+      "recall": 0.25
+    },
+    {
+      "label": "room",
+      "support": 16,
+      "predicted": 13,
+      "precision": 0.3077,
+      "recall": 0.25
+    },
+    {
+      "label": "awake",
+      "support": 19,
+      "predicted": 12,
+      "precision": 0.4167,
+      "recall": 0.2632
+    },
+    {
+      "label": "boat",
+      "support": 19,
+      "predicted": 11,
+      "precision": 0.4545,
+      "recall": 0.2632
+    }
+  ]
+}

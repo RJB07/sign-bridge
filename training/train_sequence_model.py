@@ -56,7 +56,7 @@ def round_float16(model: SignTransformer) -> SignTransformer:
 
 
 class SequenceDataset(Dataset):
-    def __init__(self, rows: list[dict], label_to_index: dict[str, int], seq_dir: Path, augment: bool, seed: int, strength: str = "base", preload: bool = True, layout: str = "legacy"):
+    def __init__(self, rows: list[dict], label_to_index: dict[str, int], seq_dir: Path, augment: bool, seed: int, strength: str = "base", preload: bool = True, layout: str = "legacy", focus_labels: set[str] | None = None):
         self.rows = rows
         self.label_to_index = label_to_index
         self.seq_dir = seq_dir
@@ -64,6 +64,7 @@ class SequenceDataset(Dataset):
         self.seed = seed
         self.strength = strength
         self.layout = layout
+        self.focus_labels = focus_labels or set()
         self.arrays = None
         if preload:
             self.arrays = [np.load(seq_dir / row["npy"]) for row in rows]
@@ -77,7 +78,8 @@ class SequenceDataset(Dataset):
         row = self.rows[index]
         seq = self.arrays[index] if self.arrays is not None else np.load(self.seq_dir / row["npy"])
         if self.augment:
-            seq = augment_sequence(seq, np.random.default_rng(), strength=self.strength, layout=self.layout)
+            strength = "timed" if row["label"] in self.focus_labels else self.strength
+            seq = augment_sequence(seq, np.random.default_rng(), strength=strength, layout=self.layout)
         seq = resample_sequence(seq, SEQ_LEN)
         x = torch.from_numpy(np.ascontiguousarray(seq))
         y = self.label_to_index[row["label"]]
@@ -308,7 +310,7 @@ def evaluate(model, loader, device, tta: bool = False) -> tuple[np.ndarray, np.n
     return np.concatenate(logits_all), np.concatenate(target_all)
 
 
-def train_student(teachers, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int = 18, batch_size: int = 64, feature_dim: int = FEATURE_DIM, d_model: int = 64, layers: int = 2, ff: int = 160, layout: str = "legacy", strength: str = "base", seq_dir: Path | None = None, patience: int = 6, seed: int = 7, label_smoothing: float = 0.05, mixup: float = 0.0, lr: float = 1e-3, distill_temperature: float = 2.0):
+def train_student(teachers, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int = 18, batch_size: int = 64, feature_dim: int = FEATURE_DIM, d_model: int = 64, layers: int = 2, ff: int = 160, layout: str = "legacy", strength: str = "base", seq_dir: Path | None = None, patience: int = 6, seed: int = 7, label_smoothing: float = 0.05, mixup: float = 0.0, lr: float = 1e-3, distill_temperature: float = 2.0, shape_embed: bool = False, focus_labels: set[str] | None = None, soft_all: torch.Tensor | None = None):
     """Distill the ensemble into one smaller transformer for phones.
 
     Teacher logits are cached on the clean training sequences. The student
@@ -316,22 +318,23 @@ def train_student(teachers, n_classes: int, class_weights: np.ndarray, train_row
     """
     torch.manual_seed(seed)
     np.random.seed(seed)
-    student = SignTransformer(feature_dim, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=0.05).to(device)
+    student = SignTransformer(feature_dim, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=0.05, shape_embed=shape_embed).to(device)
     for teacher in teachers:
         teacher.eval()
     sequences = seq_dir if seq_dir is not None else cache / "seq"
-    clean = DataLoader(
-        SequenceDataset(train_rows, label_to_index, sequences, False, 7, layout=layout),
-        batch_size=batch_size,
-        shuffle=False,
-    )
-    soft_rows = []
-    with torch.no_grad():
-        for x, _y in clean:
-            x = x.to(device)
-            soft_rows.append(torch.stack([teacher(x) for teacher in teachers]).mean(0).cpu())
-    soft_all = torch.cat(soft_rows, dim=0)
-    base = SequenceDataset(train_rows, label_to_index, sequences, True, 7, strength=strength, layout=layout)
+    if soft_all is None:
+        clean = DataLoader(
+            SequenceDataset(train_rows, label_to_index, sequences, False, 7, layout=layout),
+            batch_size=batch_size,
+            shuffle=False,
+        )
+        soft_rows = []
+        with torch.no_grad():
+            for x, _y in clean:
+                x = x.to(device)
+                soft_rows.append(torch.stack([teacher(x) for teacher in teachers]).mean(0).cpu())
+        soft_all = torch.cat(soft_rows, dim=0)
+    base = SequenceDataset(train_rows, label_to_index, sequences, True, seed, strength=strength, layout=layout, focus_labels=focus_labels)
 
     class DistillSet(Dataset):
         def __len__(self) -> int:
@@ -868,6 +871,7 @@ def run_distillation(args) -> None:
             ff=int(meta["ff"]),
             dropout=0.0,
             stem=bool(meta.get("stem", False)),
+            shape_embed=bool(meta.get("shapeEmbed", False)),
         )
         model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
         model.eval()
@@ -881,6 +885,25 @@ def run_distillation(args) -> None:
     )
     artifact = Path(args.artifact_dir)
     artifact.mkdir(parents=True, exist_ok=True)
+    focus = {part.strip() for part in args.focus_labels.split(",") if part.strip()}
+    soft_path = artifact / "teacher-soft.pt"
+    if args.resume and soft_path.exists():
+        soft_all = torch.load(soft_path, map_location="cpu", weights_only=True)
+        print({"teacherSoft": "resumed", "rows": int(soft_all.shape[0])}, flush=True)
+    else:
+        clean = DataLoader(
+            SequenceDataset(splits["train"], label_to_index, seq_dir, False, 7, layout=meta["featureLayout"]),
+            batch_size=args.batch_size,
+            shuffle=False,
+        )
+        soft_rows = []
+        with torch.no_grad():
+            for batch_x, _batch_y in clean:
+                batch_x = batch_x.to(device)
+                soft_rows.append(torch.stack([teacher(batch_x) for teacher in teachers]).mean(0).cpu())
+        soft_all = torch.cat(soft_rows, dim=0)
+        torch.save(soft_all, soft_path)
+        print({"teacherSoft": int(soft_all.shape[0])}, flush=True)
     seeds = [int(part) for part in args.seeds.split(",") if part.strip() != ""]
     students = []
     history = []
@@ -888,7 +911,7 @@ def run_distillation(args) -> None:
         final_path = artifact / f"member-{seed}.pt"
         hist_path = artifact / f"member-{seed}-history.json"
         if args.resume and final_path.exists() and hist_path.exists():
-            model = SignTransformer(feature_dim, len(labels), d_model=args.hidden, heads=4, layers=args.layers, ff=args.ff, dropout=0.0)
+            model = SignTransformer(feature_dim, len(labels), d_model=args.hidden, heads=4, layers=args.layers, ff=args.ff, dropout=0.0, shape_embed=args.shape_embed)
             model.load_state_dict(torch.load(final_path, map_location=device, weights_only=True))
             model.eval()
             students.append(model)
@@ -918,6 +941,9 @@ def run_distillation(args) -> None:
             label_smoothing=args.label_smoothing,
             mixup=args.mixup,
             lr=args.lr,
+            shape_embed=args.shape_embed,
+            focus_labels=focus,
+            soft_all=soft_all,
         )
         torch.save(student.state_dict(), final_path)
         hist_path.write_text(json.dumps(member_history), encoding="utf-8")
@@ -971,6 +997,7 @@ def main() -> None:
     parser.add_argument("--distill-from", default="", help="Train the browser model from this teacher artifact directory. Does not score test.")
     parser.add_argument("--min-precision", type=float, default=0.72, help="Validation precision floor for the live gate.")
     parser.add_argument("--boost-labels", default="", help="Comma-separated glosses whose training loss is multiplied by --boost.")
+    parser.add_argument("--focus-labels", default="", help="Glosses that receive stronger speed and crop augmentation.")
     parser.add_argument("--boost", type=float, default=1.0)
     parser.add_argument("--artifact-dir", default="training/artifacts")
     parser.add_argument("--hold-test", action="store_true", help="Select on validation and do not score the test split.")

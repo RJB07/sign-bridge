@@ -351,7 +351,7 @@ def _shift_positions(seq: np.ndarray, position_dims: int, shift: np.ndarray) -> 
     return out
 
 
-def _augment_rich(seq: np.ndarray, rng: np.random.Generator, layout: str) -> np.ndarray:
+def _augment_rich(seq: np.ndarray, rng: np.random.Generator, layout: str, timed: bool = False) -> np.ndarray:
     """Wider rotation, scale, frame drop, and whole-hand dropout.
 
     `layout="rich"` is the 294-d face-relative vector. `layout="legacy"` is the
@@ -371,14 +371,19 @@ def _augment_rich(seq: np.ndarray, rng: np.random.Generator, layout: str) -> np.
     seq = np.array(seq, dtype=np.float32, copy=True)
     if seq.shape[1] != expected:
         raise ValueError(f"{layout} augmentation expected width {expected}, got {seq.shape[1]}")
-    if seq.shape[0] > 4 and rng.random() < 0.9:
-        low = max(3, int(seq.shape[0] * 0.5))
-        high = max(low + 1, int(round(seq.shape[0] * 1.7)) + 1)
+    warp_p = 0.95 if timed else 0.9
+    low_frac = 0.4 if timed else 0.5
+    high_frac = 2.0 if timed else 1.7
+    if seq.shape[0] > 4 and rng.random() < warp_p:
+        low = max(3, int(seq.shape[0] * low_frac))
+        high = max(low + 1, int(round(seq.shape[0] * high_frac)) + 1)
         high = min(48, high)
         low = min(low, high - 1)
         seq = resample_sequence(seq, int(rng.integers(low, high)))
-    if seq.shape[0] > 6 and rng.random() < 0.6:
-        span = int(rng.integers(max(4, int(seq.shape[0] * 0.6)), seq.shape[0] + 1))
+    crop_p = 0.85 if timed else 0.6
+    crop_frac = 0.45 if timed else 0.6
+    if seq.shape[0] > 6 and rng.random() < crop_p:
+        span = int(rng.integers(max(4, int(seq.shape[0] * crop_frac)), seq.shape[0] + 1))
         start = int(rng.integers(0, seq.shape[0] - span + 1))
         seq = seq[start : start + span]
     if seq.shape[0] > 7 and rng.random() < 0.7:
@@ -391,14 +396,14 @@ def _augment_rich(seq: np.ndarray, rng: np.random.Generator, layout: str) -> np.
     seq = _rotate_scale(seq, float(rng.uniform(-0.55, 0.55)), float(rng.uniform(0.65, 1.4)), xyz_dims)
     if rng.random() < 0.8:
         shift = rng.uniform(-0.12, 0.12, size=(1, 1, 3)).astype(np.float32)
-        position_dims = 210 if layout == "rich" else 147
+        position_dims = 147 if layout == "legacy" else 210
         seq = _shift_positions(seq, position_dims, shift)
     if rng.random() < 0.55:
         seq[:, 63:126] = 0
         if layout == "legacy":
             seq[:, 210:273] = 0
     drops = int(rng.integers(0, 4))
-    bases = (0, 147, 210) if layout == "rich" else (0, 147)
+    bases = (0, 147) if layout == "legacy" else (0, 147, 210)
     for _ in range(drops):
         landmark = int(rng.integers(0, 21))
         for base in bases:
@@ -419,8 +424,8 @@ def augment_sequence(seq: np.ndarray, rng: np.random.Generator, strength: str = 
     are short, so a crop never goes below four frames. Mirror stands in for a
     left-hand signer.
     """
-    if layout == "fine" or strength == "rich":
-        return _augment_rich(seq, rng, "fine" if layout == "fine" else layout)
+    if strength == "timed" or layout == "fine" or strength == "rich":
+        return _augment_rich(seq, rng, "fine" if layout == "fine" else layout, timed=strength == "timed")
     seq = np.array(seq, dtype=np.float32, copy=True)
     strong = strength == "strong"
     if seq.shape[0] > 4 and rng.random() < (0.85 if strong else 0.75):

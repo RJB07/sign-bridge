@@ -56,6 +56,15 @@ class AugmentTests(unittest.TestCase):
         self.assertGreaterEqual(out.shape[0], 3)
         self.assertTrue(np.isfinite(out).all())
 
+    def test_timed_speed_crop_keeps_fine_width(self):
+        rng = np.random.default_rng(6)
+        seq = rng.normal(size=(20, FINE_FEATURE_DIM)).astype(np.float32)
+        for _ in range(8):
+            out = augment_sequence(seq, rng, strength="timed", layout="fine")
+            self.assertEqual(out.shape[1], FINE_FEATURE_DIM)
+            self.assertGreaterEqual(out.shape[0], 3)
+            self.assertTrue(np.isfinite(out).all())
+
 
 if __name__ == "__main__":
     unittest.main()
