@@ -1,10 +1,18 @@
 # Training
 
-The live model is the `core64-nongame` ensemble: the game core plus every non-game training clip, same validation and test lists (no Kaggle token):
+The live model is the `core64-rich192` ensemble: face-relative features, width 192, 3 layers, the game core plus every non-game training clip, same validation and test lists (no Kaggle token):
 
 ```bash
 PYTHONPATH=training python training/scan_popsign.py
 PYTHONPATH=training python training/build_cache.py --train-cap 200 --nongame-cap 100000 --core-only --with-nongame --workers 3 --progress training/metrics/extract-progress.jsonl
+PYTHONPATH=training python training/featurize_rich.py --cache training/cache --index index.jsonl
+PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --index index.jsonl --feature-layout rich --augment strong --hidden 192 --layers 3 --ff 480 --epochs 48 --patience 8 --warmup 3 --batch-size 192 --seeds 0,1,2 --label-smoothing 0.05 --experiment core64-rich192 --hold-test --distill-if-slow --resume
+PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --report-test --artifact-dir training/artifacts/core64-rich192
+```
+
+The 53.9% model used the 273-d features and a width-128, 2-layer ensemble:
+
+```bash
 PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --index index.jsonl --epochs 32 --patience 8 --batch-size 128 --seeds 0,1,2 --augment base --mixup 0 --label-smoothing 0.05 --experiment core64-nongame --skip-student --resume
 ```
 

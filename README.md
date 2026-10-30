@@ -35,25 +35,25 @@ npm run test:e2e       # replay, undo, typed reply, contrast theme, offline relo
 
 ## Using it
 
-The English sentence is the largest text on the screen. The gloss chips under it are what the recognizer committed. Sound is off until you turn on “Speaking aloud” for a hearing person. The guess shown while the hand is still moving uses one ensemble member and no mirror, and it is not recomputed on every camera frame, so a low-end phone can keep up. The word that is actually added uses the full model, then your saved signs if one is very close. Camera frames are not uploaded. Speech to text, off until you press it, sends microphone audio to the browser’s speech service and not to SignBridge. A meter and a short “Added …” line mark the commit. If the hand is missing, too close, or out of frame, the caption says so.
+The English sentence is the largest text on the screen. The gloss chips under it are what the recognizer committed. Sound is off until you turn on “Speaking aloud” for a hearing person. The guess shown while the hand is still moving uses one ensemble member and no mirror, and it is not recomputed on every camera frame, so a low-end phone can keep up. The word that is actually added uses the full model, then your saved signs if one is very close. This model file does not mirror the clip a second time. Camera frames are not uploaded. Speech to text, off until you press it, sends microphone audio to the browser’s speech service and not to SignBridge. A meter and a short “Added …” line mark the commit. If the hand is missing, too close, or out of frame, the caption says so.
 
 ## What you should expect
 
-The shipped recognizer is three landmark transformers (width 128, 2 layers, float16 weights) averaged together. It sees both hands, arm pose, and frame-to-frame motion. Validation and test are PopSign’s official game signer split (8 and 8 signers, at most 20 clips per gloss). Training is the 64-per-gloss game core from the other 31 signers, plus every non-game training clip whose signer is outside those 16 validation and test signers. One of those non-game signers is not in the 31, so the training file has 32 signers. No validation or test signer is in training.
+The shipped recognizer is three landmark transformers (width 192, 3 layers, float16 weights) averaged together. Each frame is the hands relative to the nose, wrist-centered hand shape, arm pose, and frame-to-frame motion. Validation and test are PopSign’s official game signer split (8 and 8 signers, at most 20 clips per gloss). Training is the 64-per-gloss game core from the other 31 signers, plus every non-game training clip whose signer is outside those 16 validation and test signers. One of those non-game signers is not in the 31, so the training file has 32 signers. No validation or test signer is in training.
 
 | | |
 | --- | --- |
 | Gloss vocabulary | **250** English glosses, the full PopSign / Google ASL Signs list |
 | Train / val / test clips | 40,139 / 4,623 / 4,540 |
-| Test top-1 | **53.9%** |
-| Test top-5 | **78.7%** |
-| Macro recall | 53.9% |
+| Test top-1 | **55.2%** |
+| Test top-5 | **78.1%** |
+| Macro recall | 55.2% |
 | Chance top-1 | 0.4% |
-| Live gate on test | 77.3% precision when it commits, on 48.7% of clips |
+| Live gate on test | 78.1% precision when it commits, on 49.9% of clips |
 
-The stored test scores are 0.5388 top-1 and 0.7874 top-5. The previous shipped model, trained on the 14,755 game core clips only, scored 0.5370 and 0.7793 on these same 4,540 test clips. Validation top-1 on the unchanged 4,623 clips fell from 53.8% to 52.2%. Of 27,547 indexed non-game clips, 25,384 were long enough to train on. Mirror test-time augmentation moved this run from 53.4% to 53.9%. Float16 weights matched that top-1, so the file stores float16 (about 2.9 MB). The distilled student was not trained for this export.
+The stored test scores are 0.5515 top-1 and 0.7806 top-5. One member is the best checkpoint from a 48-epoch run of this architecture (51.4% validation on its own). The other two were trained with strong time-warp augmentation. The previous shipped model, the width-128 ensemble on the same 40,139 clips, scored 0.5388 and 0.7874 on these same 4,540 test clips. Validation top-1 on the unchanged 4,623 clips rose from 52.2% to 53.1%. Of 27,547 indexed non-game clips, 25,384 were long enough to train on. Mirror test-time augmentation did not raise validation top-1 (0.5310 without it, 0.5304 with it), so the file does not mirror at commit time. Float16 weights matched the full-precision top-1. One member previews in 42 ms and the three-member commit takes 124 ms in the browser check, so the 8.6 MB file ships without a distilled student.
 
-An earlier model was 50.6% top-1 and 75.1% top-5 on 2,744 test clips drawn from a partial shard download. That list is smaller than these 4,540 clips, so it is not a paired comparison. A 32-gloss model earlier on this branch scored 59.1% top-1. That number is not comparable either: this model chooses among 250 signs. Chance falls from 3.1% to 0.4%. Conversational glosses are in the 250. Per-class recall on this test list: hello 44% (18 clips), thank you 88% (16), please 56% (16), yes 41% (17), no 53% (19), water 72% (18), mom 56% (16), dad 59% (17). **Help is not in this 250-sign list.**
+An earlier model was 50.6% top-1 and 75.1% top-5 on 2,744 test clips drawn from a partial shard download. That list is smaller than these 4,540 clips, so it is not a paired comparison. A 32-gloss model earlier on this branch scored 59.1% top-1. That number is not comparable either: this model chooses among 250 signs. Chance falls from 3.1% to 0.4%. Conversational glosses are in the 250. Per-class recall on this test list: hello 39% (18 clips), thank you 88% (16), please 69% (16), yes 53% (17), no 53% (19), water 67% (18), mom 63% (16), dad 47% (17). **Help is not in this 250-sign list.**
 
 Per-class precision and recall: `training/metrics/asl_en_metrics.json`.
 
@@ -88,12 +88,14 @@ pip install -r training/requirements.txt
 # Linux also needs libEGL and libGL for MediaPipe
 PYTHONPATH=training python training/scan_popsign.py
 PYTHONPATH=training python training/build_cache.py --train-cap 200 --nongame-cap 100000 --core-only --with-nongame --workers 3
-PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --index index.jsonl --epochs 32 --patience 8 --batch-size 128 --seeds 0,1,2 --augment base --mixup 0 --label-smoothing 0.05 --experiment core64-nongame --skip-student --resume
+PYTHONPATH=training python training/featurize_rich.py --cache training/cache --index index.jsonl
+PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --index index.jsonl --feature-layout rich --augment strong --hidden 192 --layers 3 --ff 480 --epochs 48 --patience 8 --warmup 3 --batch-size 192 --seeds 0,1,2 --label-smoothing 0.05 --experiment core64-rich192 --hold-test --distill-if-slow --resume
+PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --report-test --artifact-dir training/artifacts/core64-rich192
 ```
 
-The 53.7% model used the same caps with `--nongame-cap 0` and `--index index-core.jsonl` (`experiment core64-base`). `--with-nongame` keeps that validation and test list and adds non-game training clips only.
+`--hold-test` picks mirror augmentation, float16, and a student on validation only. `--report-test` scores that selection on the test list once. The 53.9% model used the 273-d features, width 128, 2 layers, and `--augment base` (`experiment core64-nongame`). The 53.7% model used the same caps with `--nongame-cap 0` and `--index index-core.jsonl` (`experiment core64-base`). `--with-nongame` keeps that validation and test list and adds non-game training clips only.
 
-Extraction writes `training/cache/` (gitignored). The trainer compares a three-seed ensemble with a smaller distilled student, with and without mirror test-time augmentation, and it tries float16 weights when the test top-1 drop stays within half a point. It replaces `public/models/asl-en-sequence.json` only when the signer-disjoint test top-1 is higher than the file already there. Either way it writes `training/metrics/asl_en_run.json`.
+Extraction writes `training/cache/` (gitignored). The trainer compares a three-seed ensemble with a smaller distilled student, with and without mirror test-time augmentation, and it keeps float16 weights when the validation top-1 drop stays within half a point. It replaces `public/models/asl-en-sequence.json` only when the signer-disjoint test top-1 is higher than the file already there and the browser latency check passes. Either way it writes `training/metrics/asl_en_run.json`.
 
 When a run is shipped it also writes:
 
