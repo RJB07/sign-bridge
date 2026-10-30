@@ -39,23 +39,23 @@ The English sentence is the largest text on the screen. The gloss chips under it
 
 ## What you should expect
 
-The shipped recognizer is three landmark transformers (width 192, 3 layers, float16 weights) averaged together. Each frame is the hands relative to the nose, wrist-centered hand shape, arm pose, and frame-to-frame motion. Validation and test are PopSign’s official game signer split (8 and 8 signers, at most 20 clips per gloss). Training is the 64-per-gloss game core from the other 31 signers, plus every non-game training clip whose signer is outside those 16 validation and test signers. One of those non-game signers is not in the 31, so the training file has 32 signers. No validation or test signer is in training.
+The shipped recognizer is three landmark transformers (width 192, 3 layers, float16 weights) averaged together, plus a small hand-shape embedding. Each frame is the hands relative to the nose, wrist-centered hand shape, arm pose, frame-to-frame motion, the wrist and fingertips relative to the lips, eyes, and cheeks, and five fingertip curls. Validation and test are PopSign’s official game signer split (8 and 8 signers, at most 20 clips per gloss). Training is the 64-per-gloss game core from the other 31 signers, plus every non-game training clip whose signer is outside those 16 validation and test signers. One of those non-game signers is not in the 31, so the training file has 32 signers. No validation or test signer is in training.
 
 | | |
 | --- | --- |
 | Gloss vocabulary | **250** English glosses, the full PopSign / Google ASL Signs list |
 | Train / val / test clips | 40,139 / 4,623 / 4,540 |
-| Test top-1 | **55.2%** |
-| Test top-5 | **78.1%** |
-| Macro recall | 55.2% |
+| Test top-1 | **56.7%** |
+| Test top-5 | **79.4%** |
+| Macro recall | 56.7% |
 | Chance top-1 | 0.4% |
-| Live gate on test | 78.1% precision when it commits, on 49.9% of clips |
+| Live gate on test | 76.5% precision when it commits, on 54.8% of clips |
 
-The stored test scores are 0.5515 top-1 and 0.7806 top-5. One member is the best checkpoint from a 48-epoch run of this architecture (51.4% validation on its own). The other two were trained with strong time-warp augmentation. The previous shipped model, the width-128 ensemble on the same 40,139 clips, scored 0.5388 and 0.7874 on these same 4,540 test clips. Validation top-1 on the unchanged 4,623 clips rose from 52.2% to 53.1%. Of 27,547 indexed non-game clips, 25,384 were long enough to train on. Mirror test-time augmentation did not raise validation top-1 (0.5310 without it, 0.5304 with it), so the file does not mirror at commit time. Float16 weights matched the full-precision top-1. One member previews in 42 ms and the three-member commit takes 124 ms in the browser check, so the 8.6 MB file ships without a distilled student.
+The stored test scores are 0.5667 top-1 and 0.7938 top-5. Validation top-1 on the unchanged 4,623 clips is 55.5%, and validation top-5 is 80.7%. The previous shipped model, the same width and depth without the face offsets, scored 0.5515 and 0.7806 on these same 4,540 test clips. Mirror test-time augmentation did not clear the latency budget, so the file does not mirror at commit time. The file divides logits by a temperature of **1.10** before the softmax. That value was fit on the validation clips and does not change which gloss wins. One member previews in 43 ms and the three-member commit takes 128 ms, under the 130 ms budget.
 
-The file divides logits by a temperature of **1.12** before the softmax. On the validation clips that lowers negative log likelihood from 2.019 to 1.999 and does not change the argmax, so the stored test top-1 stays 55.2%. The live gate was fit again on those tempered scores: about 73% precision, committing on 56% of validation clips. When the gate will not add a word, three large buttons offer the top guesses. Tap the one you signed. The weakest validation glosses are pen, go, mouth, sleep, tree, and wet, usually mixed with a near neighbor such as pencil, eye, or lips. Details: `training/metrics/val-errors.json`.
+When the gate will not add a word, three large buttons offer the top guesses. Tap the one you signed. The previous model’s weakest validation glosses were near neighbors such as pen/pencil, cheek/eye, and mouth/lips. Those distances are what the extra face features are for.
 
-An earlier model was 50.6% top-1 and 75.1% top-5 on 2,744 test clips drawn from a partial shard download. That list is smaller than these 4,540 clips, so it is not a paired comparison. A 32-gloss model earlier on this branch scored 59.1% top-1. That number is not comparable either: this model chooses among 250 signs. Chance falls from 3.1% to 0.4%. Conversational glosses are in the 250. Per-class recall on this test list: hello 39% (18 clips), thank you 88% (16), please 69% (16), yes 53% (17), no 53% (19), water 67% (18), mom 63% (16), dad 47% (17). **Help is not in this 250-sign list.**
+An earlier model was 50.6% top-1 and 75.1% top-5 on 2,744 test clips drawn from a partial shard download. That list is smaller than these 4,540 clips, so it is not a paired comparison. A 32-gloss model earlier on this branch scored 59.1% top-1. That number is not comparable either: this model chooses among 250 signs. Chance falls from 3.1% to 0.4%. Conversational glosses are in the 250. Per-class recall on this test list: hello 44% (18 clips), thank you 88% (16), please 69% (16), yes 47% (17), no 53% (19), water 78% (18), mom 63% (16), dad 53% (17). **Help is not in this 250-sign list.**
 
 Per-class precision and recall: `training/metrics/asl_en_metrics.json`.
 
@@ -90,12 +90,12 @@ pip install -r training/requirements.txt
 # Linux also needs libEGL and libGL for MediaPipe
 PYTHONPATH=training python training/scan_popsign.py
 PYTHONPATH=training python training/build_cache.py --train-cap 200 --nongame-cap 100000 --core-only --with-nongame --workers 3
-PYTHONPATH=training python training/featurize_rich.py --cache training/cache --index index.jsonl
-PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --index index.jsonl --feature-layout rich --augment strong --hidden 192 --layers 3 --ff 480 --epochs 48 --patience 8 --warmup 3 --batch-size 192 --seeds 0,1,2 --label-smoothing 0.05 --experiment core64-rich192 --hold-test --distill-if-slow --resume
-PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --report-test --artifact-dir training/artifacts/core64-rich192
+PYTHONPATH=training python training/featurize_fine.py --cache training/cache --index index.jsonl
+PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --index index.jsonl --seq-subdir seq-fine --feature-layout fine --shape-embed --augment strong --hidden 192 --layers 3 --ff 480 --epochs 36 --patience 8 --warmup 3 --batch-size 128 --seeds 0,1,2 --label-smoothing 0.05 --experiment fine192 --artifact-dir training/artifacts/fine192 --hold-test --skip-student --latency-commit-ms 130 --resume
+PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --report-test --artifact-dir training/artifacts/fine192 --feature-layout fine
 ```
 
-`--hold-test` picks mirror augmentation, float16, and a student on validation only. `--report-test` scores that selection on the test list once. The 53.9% model used the 273-d features, width 128, 2 layers, and `--augment base` (`experiment core64-nongame`). The 53.7% model used the same caps with `--nongame-cap 0` and `--index index-core.jsonl` (`experiment core64-base`). `--with-nongame` keeps that validation and test list and adds non-game training clips only.
+`--hold-test` picks mirror augmentation, float16, and a student on validation only. `--report-test` scores that selection on the test list once. The 55.2% model used the 294-d features without face offsets (`experiment core64-rich192`). The 53.9% model used the 273-d features, width 128, and 2 layers (`experiment core64-nongame`). `--with-nongame` keeps that validation and test list and adds non-game training clips only.
 
 Extraction writes `training/cache/` (gitignored). The trainer compares a three-seed ensemble with a smaller distilled student, with and without mirror test-time augmentation, and it keeps float16 weights when the validation top-1 drop stays within half a point. It replaces `public/models/asl-en-sequence.json` only when the signer-disjoint test top-1 is higher than the file already there and the browser latency check passes. Either way it writes `training/metrics/asl_en_run.json`.
 
