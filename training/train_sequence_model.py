@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 from collections import defaultdict
 from pathlib import Path
 
@@ -177,6 +178,10 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
         }
         history.append(row)
         print(row, flush=True)
+        live_path = os.environ.get("SIGNBRIDGE_LIVE_LOG")
+        if live_path:
+            with open(live_path, "a", encoding="utf-8") as live:
+                live.write(json.dumps(row) + "\n")
         if val_top1 > best_top1 + 1e-4:
             best_top1 = val_top1
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
