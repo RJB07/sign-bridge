@@ -1,0 +1,35 @@
+{
+  "experiment": "core64-nongame",
+  "extracted": "validation, test, core train, and non-game train",
+  "clipsAfterTwoFrameFilter": {
+    "train": 40139,
+    "validation": 4623,
+    "test": 4540,
+    "gameCoreTrain": 14755,
+    "nongameTrain": 25384
+  },
+  "selectedBeforeFilter": {
+    "nongameTrain": 27547,
+    "gameCoreTrain": 15928,
+    "validation": 4997,
+    "test": 4998
+  },
+  "signers": {
+    "train": 32,
+    "validation": 8,
+    "test": 8,
+    "gameTrain": 31,
+    "nongameTrain": 31,
+    "nongameOutsideGameTrain": ["4a.8023"],
+    "gameTrainMissingFromNongame": ["gtsignstudy4a.8041"]
+  },
+  "leakage": {
+    "train&validation": [],
+    "train&test": [],
+    "validation&test": []
+  },
+  "validationSignersMatchShipped": true,
+  "testSignersMatchShipped": true,
+  "gameValTestCountsMatchShipped": true,
+  "note": "Official game validation and test lists are unchanged (4,623 and 4,540 clips, same signers as the 53.7% model). Non-game clips are training only. 2,163 of 27,547 non-game candidates were shorter than two frames after landmark extraction and were dropped."
+}
