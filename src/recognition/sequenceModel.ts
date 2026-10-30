@@ -27,6 +27,8 @@ export type SequenceModel = {
   tta: boolean;
   /** `rich` is nose-relative hands, shape, and velocity. Absent means the 273-d vector. */
   featureLayout: 'legacy' | 'rich';
+  /** Softmax temperature. 1 leaves confidence unchanged. Values above 1 reduce overconfidence. */
+  temperature: number;
   members: WeightBlob[];
 };
 
@@ -44,6 +46,7 @@ type ModelFile = {
   tta?: boolean;
   dtype?: 'f16' | 'f32';
   featureLayout?: 'legacy' | 'rich';
+  temperature?: number;
   members: WeightBlob[];
 };
 
@@ -316,6 +319,7 @@ export function modelFromJson(payload: ModelFile): SequenceModel {
     classThresholds: payload.classThresholds ?? payload.labels.map(() => payload.emitThreshold),
     tta: Boolean(payload.tta),
     featureLayout: payload.featureLayout === 'rich' ? 'rich' : 'legacy',
+    temperature: typeof payload.temperature === 'number' && payload.temperature > 0 ? payload.temperature : 1,
     featureDim: payload.featureDim,
     seqLen: payload.seqLen,
     dModel: payload.dModel,
@@ -353,7 +357,8 @@ export function predictSequence(model: SequenceModel, sequence: number[][], opti
     }
   }
   const denomViews = views.length * members.length;
-  for (let i = 0; i < acc.length; i++) acc[i] /= denomViews;
+  const temperature = model.temperature > 0 ? model.temperature : 1;
+  for (let i = 0; i < acc.length; i++) acc[i] /= denomViews * temperature;
   let max = -Infinity;
   for (let i = 0; i < acc.length; i++) if (acc[i] > max) max = acc[i];
   const probabilities = new Array<number>(acc.length);

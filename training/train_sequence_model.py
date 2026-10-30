@@ -161,12 +161,14 @@ def _publish_best(seed: int, best_state, history: list) -> None:
     (tracked / f"member-{seed}-history.json").write_text(json.dumps(history), encoding="utf-8")
 
 
-def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int, d_model: int = 128, layers: int = 2, ff: int = 320, dropout: float = 0.1, label_smoothing: float = 0.05, mixup: float = 0.0, strength: str = "base", patience: int = 10, checkpoint_dir: Path | None = None, resume: bool = False, preload: bool = True, feature_dim: int = FEATURE_DIM, layout: str = "legacy", seq_dir: Path | None = None, lr: float = 1e-3, warmup_epochs: int = 2, lr_min: float = 0.0, stem: bool = False, weight_decay: float = 1e-4):
+def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int, d_model: int = 128, layers: int = 2, ff: int = 320, dropout: float = 0.1, label_smoothing: float = 0.05, mixup: float = 0.0, strength: str = "base", patience: int = 10, checkpoint_dir: Path | None = None, resume: bool = False, preload: bool = True, feature_dim: int = FEATURE_DIM, layout: str = "legacy", seq_dir: Path | None = None, lr: float = 1e-3, warmup_epochs: int = 2, lr_min: float = 0.0, stem: bool = False, weight_decay: float = 1e-4, init_path: Path | None = None):
     torch.manual_seed(seed)
     np.random.seed(seed)
     if d_model % 4 != 0:
         raise ValueError(f"d_model {d_model} must be divisible by 4 heads")
     model = SignTransformer(feature_dim, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=dropout, stem=stem).to(device)
+    if init_path is not None:
+        model.load_state_dict(torch.load(init_path, map_location=device, weights_only=True))
     loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=label_smoothing)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     warmup_steps = max(1, warmup_epochs)
@@ -202,6 +204,12 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
         scheduler.load_state_dict(payload["scheduler"])
         start_epoch = int(payload["epoch"]) + 1
         print({"seed": seed, "resumed": start_epoch, "valTop1": round(best_top1, 4)}, flush=True)
+    if init_path is not None and start_epoch == 1:
+        init_logits, init_y = evaluate(model, val_loader, device, tta=False)
+        init_top1 = ranked_accuracy(init_logits, init_y, 1)
+        best_top1 = init_top1
+        best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+        print({"seed": seed, "initValTop1": round(init_top1, 4), "initValTop5": round(ranked_accuracy(init_logits, init_y, 5), 4)}, flush=True)
     for epoch in range(start_epoch, epochs + 1):
         model.train()
         total = 0
@@ -411,6 +419,31 @@ def score_models(models, val_loader, test_loader, device) -> dict:
     }
 
 
+def fit_temperature(logits: np.ndarray, target: np.ndarray) -> float:
+    """Scalar temperature that minimizes validation NLL. Argmax is unchanged."""
+    log = torch.from_numpy(np.ascontiguousarray(logits)).float()
+    y = torch.from_numpy(np.ascontiguousarray(target)).long()
+
+    def nll(temperature: float) -> float:
+        return float(torch.nn.functional.cross_entropy(log / temperature, y))
+
+    lo, hi = 0.5, 4.0
+    for _ in range(16):
+        left = lo + (hi - lo) / 3
+        right = hi - (hi - lo) / 3
+        if nll(left) < nll(right):
+            hi = right
+        else:
+            lo = left
+    return round((lo + hi) / 2, 4)
+
+
+def nll_at(logits: np.ndarray, target: np.ndarray, temperature: float = 1.0) -> float:
+    log = torch.from_numpy(np.ascontiguousarray(logits)).float()
+    y = torch.from_numpy(np.ascontiguousarray(target)).long()
+    return float(torch.nn.functional.cross_entropy(log / temperature, y))
+
+
 def per_class_thresholds(logits: np.ndarray, target: np.ndarray, fallback: float, min_precision: float = 0.72) -> list[float]:
     """Lowest confidence that keeps precision of that class at or above min_precision."""
     shifted = logits - logits.max(axis=1, keepdims=True)
@@ -441,7 +474,7 @@ def per_class_thresholds(logits: np.ndarray, target: np.ndarray, fallback: float
     return thresholds
 
 
-def choose_threshold(logits: np.ndarray, target: np.ndarray) -> dict:
+def choose_threshold(logits: np.ndarray, target: np.ndarray, min_precision: float = 0.72, min_coverage: float = 0.25) -> dict:
     """Pick a live gate on validation signers.
 
     Argmax top-1 is the reported accuracy. The gate is a separate operating
@@ -474,7 +507,8 @@ def choose_threshold(logits: np.ndarray, target: np.ndarray) -> dict:
                     "f1": round(f1, 4),
                 }
             )
-    usable = [row for row in candidates if row["precision"] >= 0.72 and row["coverage"] >= 0.25]
+    strict = [row for row in candidates if row["precision"] >= min_precision and row["coverage"] >= min_coverage]
+    usable = strict or [row for row in candidates if row["precision"] >= 0.72 and row["coverage"] >= min_coverage]
     pool = usable or candidates
     if not pool:
         return {
@@ -505,7 +539,7 @@ def _layout_dim(layout: str) -> int:
     raise ValueError(layout)
 
 
-def write_browser_file(path: Path, models, labels: list[str], dtype: str, tta: bool, feature_dim: int, feature_layout: str, emit: float, margin: float, class_thresholds: list[float]) -> None:
+def write_browser_file(path: Path, models, labels: list[str], dtype: str, tta: bool, feature_dim: int, feature_layout: str, emit: float, margin: float, class_thresholds: list[float], temperature: float = 1.0) -> None:
     members = []
     for model in models:
         weights = export_state(model)
@@ -531,6 +565,7 @@ def write_browser_file(path: Path, models, labels: list[str], dtype: str, tta: b
         "marginThreshold": margin,
         "classThresholds": class_thresholds,
         "tta": tta,
+        "temperature": temperature,
         "members": members,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -580,11 +615,38 @@ def _apply_dtype(models, val_loader, device):
     return full
 
 
+def _init_checkpoint(directory: str, seed: int) -> Path | None:
+    if not directory:
+        return None
+    root = Path(directory)
+    for name in (f"member-{seed}-best.pt", f"member-{seed}.pt"):
+        path = root / name
+        if path.exists():
+            return path
+    return None
+
+
+def calibrate_gate(logits: np.ndarray, target: np.ndarray, min_precision: float) -> dict:
+    temperature = fit_temperature(logits, target)
+    tempered = np.asarray(logits, dtype=np.float32) / temperature
+    threshold = choose_threshold(tempered, target, min_precision=min_precision)
+    floors = per_class_thresholds(tempered, target, threshold["threshold"], min_precision=min_precision)
+    return {
+        "temperature": temperature,
+        "threshold": threshold,
+        "floors": floors,
+        "nll": round(nll_at(logits, target, 1.0), 4),
+        "nllCalibrated": round(nll_at(logits, target, temperature), 4),
+    }
+
+
 def hold_out_selection(args, members, history, labels, class_weights, splits, label_to_index, cache, seq_dir, val_loader, device, feature_dim: int, artifact: Path) -> None:
     """Choose TTA, float16, and a student on validation. Do not read the test split."""
     chosen = _apply_dtype(members, val_loader, device)
-    threshold = choose_threshold(chosen["val_logits"], chosen["val_y"])
-    class_thresholds = per_class_thresholds(chosen["val_logits"], chosen["val_y"], threshold["threshold"])
+    gate = calibrate_gate(chosen["val_logits"], chosen["val_y"], args.min_precision)
+    threshold = gate["threshold"]
+    class_thresholds = gate["floors"]
+    temperature = gate["temperature"]
     artifact.mkdir(parents=True, exist_ok=True)
     (artifact / "history.json").write_text(json.dumps(history), encoding="utf-8")
     probe = Path("/tmp/signbridge-latency-probe.json")
@@ -599,10 +661,42 @@ def hold_out_selection(args, members, history, labels, class_weights, splits, la
         threshold["threshold"],
         threshold["margin"],
         class_thresholds,
+        temperature,
     )
     latency = browser_latency(probe)
     latency_ok = _latency_ok(latency, args.latency_preview_ms, args.latency_commit_ms)
-    print({"teacherVal": round(chosen["val_top1"], 4), "teacherLatency": latency, "latencyOk": latency_ok}, flush=True)
+    if chosen["use_tta"] and not latency_ok:
+        plain_logits, plain_y = ensemble_logits(chosen["models"], val_loader, device, tta=False)
+        plain = dict(chosen)
+        plain["use_tta"] = False
+        plain["val_logits"] = plain_logits
+        plain["val_y"] = plain_y
+        plain["val_top1"] = ranked_accuracy(plain_logits, plain_y, 1)
+        plain["val_top5"] = ranked_accuracy(plain_logits, plain_y, 5)
+        plain_gate = calibrate_gate(plain_logits, plain_y, args.min_precision)
+        write_browser_file(
+            probe,
+            plain["models"],
+            labels,
+            plain["dtype"],
+            False,
+            feature_dim,
+            args.feature_layout,
+            plain_gate["threshold"]["threshold"],
+            plain_gate["threshold"]["margin"],
+            plain_gate["floors"],
+            plain_gate["temperature"],
+        )
+        plain_latency = browser_latency(probe)
+        if _latency_ok(plain_latency, args.latency_preview_ms, args.latency_commit_ms):
+            chosen = plain
+            gate = plain_gate
+            threshold = gate["threshold"]
+            class_thresholds = gate["floors"]
+            temperature = gate["temperature"]
+            latency = plain_latency
+            latency_ok = True
+    print({"teacherVal": round(chosen["val_top1"], 4), "teacherTop5": round(chosen["val_top5"], 4), "temperature": temperature, "teacherLatency": latency, "latencyOk": latency_ok}, flush=True)
     ship_student = False
     student_val = None
     if args.distill_if_slow and not latency_ok:
@@ -627,8 +721,9 @@ def hold_out_selection(args, members, history, labels, class_weights, splits, la
         )
         history.extend(student_history)
         student_choice = _apply_dtype([student], val_loader, device)
-        student_threshold = choose_threshold(student_choice["val_logits"], student_choice["val_y"])
-        student_floors = per_class_thresholds(student_choice["val_logits"], student_choice["val_y"], student_threshold["threshold"])
+        student_gate = calibrate_gate(student_choice["val_logits"], student_choice["val_y"], args.min_precision)
+        student_threshold = student_gate["threshold"]
+        student_floors = student_gate["floors"]
         write_browser_file(
             probe,
             student_choice["models"],
@@ -640,6 +735,7 @@ def hold_out_selection(args, members, history, labels, class_weights, splits, la
             student_threshold["threshold"],
             student_threshold["margin"],
             student_floors,
+            student_gate["temperature"],
         )
         student_latency = browser_latency(probe)
         student_ok = _latency_ok(student_latency, args.latency_preview_ms, args.latency_commit_ms)
@@ -650,6 +746,8 @@ def hold_out_selection(args, members, history, labels, class_weights, splits, la
             chosen = student_choice
             threshold = student_threshold
             class_thresholds = student_floors
+            temperature = student_gate["temperature"]
+            gate = student_gate
             latency = student_latency
             latency_ok = True
             ship_student = True
@@ -673,6 +771,10 @@ def hold_out_selection(args, members, history, labels, class_weights, splits, la
         "threshold": threshold["threshold"],
         "margin": threshold["margin"],
         "classThresholds": class_thresholds,
+        "temperature": temperature,
+        "nll": gate["nll"],
+        "nllCalibrated": gate["nllCalibrated"],
+        "minPrecision": args.min_precision,
         "latency": latency,
         "latencyOk": latency_ok,
         "latencyPreviewMs": args.latency_preview_ms,
@@ -729,6 +831,8 @@ def main() -> None:
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--stem", action="store_true", help="Add a residual depthwise temporal stem (kernels 5 and 3) before attention.")
     parser.add_argument("--warmup", type=int, default=2)
+    parser.add_argument("--init-dir", default="", help="Load member-{seed}-best.pt from this directory before training.")
+    parser.add_argument("--min-precision", type=float, default=0.72, help="Validation precision floor for the live gate.")
     parser.add_argument("--artifact-dir", default="training/artifacts")
     parser.add_argument("--hold-test", action="store_true", help="Select on validation and do not score the test split.")
     parser.add_argument("--report-test", action="store_true", help="Score the saved validation selection on the test split once.")
@@ -824,6 +928,7 @@ def main() -> None:
             lr_min=args.lr_min,
             stem=args.stem,
             weight_decay=args.weight_decay,
+            init_path=_init_checkpoint(args.init_dir, seed),
         )
         members.append(model)
         history.extend(member_history)
@@ -1250,6 +1355,7 @@ def report_test(args) -> None:
         float(selection["threshold"]),
         float(selection["margin"]),
         class_thresholds,
+        float(selection.get("temperature", 1.0)),
     )
     latency = browser_latency(probe)
     latency_ok = _latency_ok(latency, float(selection.get("latencyPreviewMs", args.latency_preview_ms)), float(selection.get("latencyCommitMs", args.latency_commit_ms)))
@@ -1371,6 +1477,7 @@ def report_test(args) -> None:
         float(selection["threshold"]),
         float(selection["margin"]),
         class_thresholds,
+        float(selection.get("temperature", 1.0)),
     )
     shipped = json.loads(shipped_path.read_text(encoding="utf-8"))
     shipped.update(

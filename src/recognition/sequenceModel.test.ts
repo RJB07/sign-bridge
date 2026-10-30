@@ -52,6 +52,20 @@ describe('landmark transformer', () => {
     expect(model.members[0].weights['dw1.weight']).toBeTruthy();
   });
 
+  it('temperature leaves the label and softens confidence', () => {
+    const model = modelFromJson(smoke);
+    const flat = decodeF32(smoke.input);
+    const sequence: number[][] = [];
+    for (let t = 0; t < model.seqLen; t++) {
+      sequence.push(Array.from(flat.slice(t * model.featureDim, (t + 1) * model.featureDim)));
+    }
+    const sharp = predictSequence(model, sequence, { tta: false });
+    const soft = predictSequence({ ...model, temperature: 4 }, sequence, { tta: false });
+    expect(soft.label).toBe(sharp.label);
+    expect(soft.confidence).toBeLessThanOrEqual(sharp.confidence + 1e-6);
+    expect(modelFromJson(smoke).temperature).toBe(1);
+  });
+
   it('decodes float16 weights and can score with one ensemble member', () => {
     expect(float16BitsToFloat32(0x3c00)).toBe(1);
     expect(float16BitsToFloat32(0xc000)).toBe(-2);

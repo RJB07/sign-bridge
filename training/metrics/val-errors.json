@@ -1,0 +1,304 @@
+{
+  "split": "validation",
+  "clips": 4623,
+  "top1": 0.531,
+  "top5": 0.7863,
+  "temperature": 1.1163,
+  "nll": 2.0189,
+  "nllCalibrated": 1.999,
+  "gateUncalibrated": {
+    "threshold": 0.5,
+    "margin": 0.04,
+    "precision": 0.7229,
+    "coverage": 0.5871,
+    "recall": 0.4244,
+    "f1": 0.5348
+  },
+  "gateCalibratedPrecision80": {
+    "threshold": 0.6,
+    "margin": 0.04,
+    "precision": 0.8214,
+    "coverage": 0.419,
+    "recall": 0.3441,
+    "f1": 0.4851
+  },
+  "worstRecall": [
+    {
+      "label": "pen",
+      "support": 19,
+      "predicted": 15,
+      "precision": 0.0,
+      "recall": 0.0
+    },
+    {
+      "label": "go",
+      "support": 16,
+      "predicted": 12,
+      "precision": 0.0,
+      "recall": 0.0
+    },
+    {
+      "label": "mouth",
+      "support": 18,
+      "predicted": 9,
+      "precision": 0.2222,
+      "recall": 0.1111
+    },
+    {
+      "label": "sleep",
+      "support": 18,
+      "predicted": 4,
+      "precision": 0.5,
+      "recall": 0.1111
+    },
+    {
+      "label": "tree",
+      "support": 17,
+      "predicted": 9,
+      "precision": 0.2222,
+      "recall": 0.1176
+    },
+    {
+      "label": "wet",
+      "support": 17,
+      "predicted": 8,
+      "precision": 0.25,
+      "recall": 0.1176
+    },
+    {
+      "label": "read",
+      "support": 16,
+      "predicted": 5,
+      "precision": 0.4,
+      "recall": 0.125
+    },
+    {
+      "label": "finger",
+      "support": 20,
+      "predicted": 14,
+      "precision": 0.2143,
+      "recall": 0.15
+    },
+    {
+      "label": "cheek",
+      "support": 19,
+      "predicted": 14,
+      "precision": 0.2143,
+      "recall": 0.1579
+    },
+    {
+      "label": "lips",
+      "support": 19,
+      "predicted": 19,
+      "precision": 0.1579,
+      "recall": 0.1579
+    },
+    {
+      "label": "mad",
+      "support": 19,
+      "predicted": 14,
+      "precision": 0.2143,
+      "recall": 0.1579
+    },
+    {
+      "label": "on",
+      "support": 18,
+      "predicted": 13,
+      "precision": 0.2308,
+      "recall": 0.1667
+    },
+    {
+      "label": "cloud",
+      "support": 17,
+      "predicted": 16,
+      "precision": 0.1875,
+      "recall": 0.1765
+    },
+    {
+      "label": "icecream",
+      "support": 17,
+      "predicted": 11,
+      "precision": 0.2727,
+      "recall": 0.1765
+    },
+    {
+      "label": "glasswindow",
+      "support": 20,
+      "predicted": 15,
+      "precision": 0.2667,
+      "recall": 0.2
+    },
+    {
+      "label": "hide",
+      "support": 20,
+      "predicted": 8,
+      "precision": 0.5,
+      "recall": 0.2
+    },
+    {
+      "label": "touch",
+      "support": 20,
+      "predicted": 4,
+      "precision": 1.0,
+      "recall": 0.2
+    },
+    {
+      "label": "ride",
+      "support": 19,
+      "predicted": 20,
+      "precision": 0.2,
+      "recall": 0.2105
+    },
+    {
+      "label": "yes",
+      "support": 19,
+      "predicted": 11,
+      "precision": 0.3636,
+      "recall": 0.2105
+    },
+    {
+      "label": "beside",
+      "support": 14,
+      "predicted": 28,
+      "precision": 0.1071,
+      "recall": 0.2143
+    },
+    {
+      "label": "fall",
+      "support": 18,
+      "predicted": 9,
+      "precision": 0.4444,
+      "recall": 0.2222
+    },
+    {
+      "label": "outside",
+      "support": 18,
+      "predicted": 22,
+      "precision": 0.1818,
+      "recall": 0.2222
+    },
+    {
+      "label": "say",
+      "support": 18,
+      "predicted": 8,
+      "precision": 0.5,
+      "recall": 0.2222
+    },
+    {
+      "label": "will",
+      "support": 17,
+      "predicted": 10,
+      "precision": 0.4,
+      "recall": 0.2353
+    },
+    {
+      "label": "close",
+      "support": 20,
+      "predicted": 14,
+      "precision": 0.3571,
+      "recall": 0.25
+    }
+  ],
+  "topConfusions": [
+    {
+      "truth": "cheek",
+      "guess": "eye",
+      "count": 12
+    },
+    {
+      "truth": "awake",
+      "guess": "wake",
+      "count": 10
+    },
+    {
+      "truth": "finger",
+      "guess": "wait",
+      "count": 10
+    },
+    {
+      "truth": "pen",
+      "guess": "pencil",
+      "count": 10
+    },
+    {
+      "truth": "sun",
+      "guess": "shower",
+      "count": 9
+    },
+    {
+      "truth": "hear",
+      "guess": "listen",
+      "count": 8
+    },
+    {
+      "truth": "mouse",
+      "guess": "pretend",
+      "count": 8
+    },
+    {
+      "truth": "because",
+      "guess": "black",
+      "count": 7
+    },
+    {
+      "truth": "pencil",
+      "guess": "pen",
+      "count": 7
+    },
+    {
+      "truth": "penny",
+      "guess": "think",
+      "count": 7
+    },
+    {
+      "truth": "tongue",
+      "guess": "goose",
+      "count": 7
+    },
+    {
+      "truth": "cry",
+      "guess": "eye",
+      "count": 6
+    },
+    {
+      "truth": "dry",
+      "guess": "dryer",
+      "count": 6
+    },
+    {
+      "truth": "mouth",
+      "guess": "lips",
+      "count": 6
+    },
+    {
+      "truth": "pretend",
+      "guess": "hello",
+      "count": 6
+    },
+    {
+      "truth": "tooth",
+      "guess": "tongue",
+      "count": 6
+    },
+    {
+      "truth": "bath",
+      "guess": "jacket",
+      "count": 5
+    },
+    {
+      "truth": "before",
+      "guess": "outside",
+      "count": 5
+    },
+    {
+      "truth": "close",
+      "guess": "glasswindow",
+      "count": 5
+    },
+    {
+      "truth": "dryer",
+      "guess": "dry",
+      "count": 5
+    }
+  ]
+}
