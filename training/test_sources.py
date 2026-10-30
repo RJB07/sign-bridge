@@ -2,7 +2,7 @@
 
 import unittest
 
-from sources import assert_merged_disjoint, choose, select_game, select_nongame_train
+from sources import assert_merged_disjoint, choose, clips_to_extract, select_game, select_nongame_train
 
 
 def row(subset, split, signer, label, parquet="a.parquet", index=0):
@@ -63,6 +63,28 @@ class SourceTests(unittest.TestCase):
         self.assertLessEqual(len(core), 4)
         self.assertTrue(core)
         self.assertTrue(all(item["subset"] == "game" for item in core))
+
+    def test_core_extract_can_keep_nongame_training_clips(self):
+        records = []
+        index = 0
+        for label in ("apple", "bird"):
+            for split, signer in (("train", "s-train"), ("validation", "s-val"), ("test", "s-test")):
+                for _copy in range(4):
+                    records.append(row("game", split, signer, label, f"{split}.parquet", index))
+                    index += 1
+            records.append(row("non-game", "train", "s-new", label, "n.parquet", index))
+            index += 1
+        selected, _note = choose(records, train_cap=3, val_cap=2, test_cap=2, nongame_cap=5, core_cap=2)
+        core = clips_to_extract(selected, core_only=True, with_nongame=False)
+        both = clips_to_extract(selected, core_only=True, with_nongame=True)
+        self.assertTrue(core)
+        self.assertTrue(all(item["split"] != "train" or item.get("core") for item in core))
+        self.assertFalse(any(item["subset"] == "non-game" for item in core))
+        nongame = [item for item in both if item["subset"] == "non-game"]
+        self.assertEqual(len(nongame), 2)
+        self.assertTrue(all(item["split"] == "train" and item["signer"] == "s-new" for item in nongame))
+        heldout = {(item["split"], item["parquet"], item["row"]) for item in both if item["split"] != "train"}
+        self.assertEqual(heldout, {(item["split"], item["parquet"], item["row"]) for item in core if item["split"] != "train"})
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ import pyarrow.parquet as pq
 from PIL import Image
 
 from features import LIP_INDEXES, sequence_features
-from sources import choose
+from sources import choose, clips_to_extract
 
 BASE = "https://huggingface.co/datasets/sign/popsign-images/resolve/main"
 ROOT = Path(__file__).resolve().parent
@@ -197,7 +197,11 @@ def extract_remote(payload: dict) -> str:
             start = starts[group_index]
             for record in group_rows:
                 local = int(record["row"]) - start
-                features, raw = clip_arrays(landmarker, images[local].as_py())
+                try:
+                    features, raw = clip_arrays(landmarker, images[local].as_py())
+                except Exception as exc:  # noqa: BLE001 - one bad frame should not drop the shard
+                    print(f"clip fail {record.get('source')}: {type(exc).__name__}: {exc}", flush=True)
+                    continue
                 if features.shape[0] < 2:
                     continue
                 name = npy_name(record)
@@ -226,8 +230,11 @@ def extract_remote(payload: dict) -> str:
 
 
 def _worker(payload: dict) -> str:
+    import os
     import time
 
+    os.environ["GLOG_minloglevel"] = "2"
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
     last = "unknown"
     for attempt in range(3):
         try:
@@ -254,6 +261,12 @@ def main() -> None:
         action="store_true",
         help="Download validation, test, and the core training subset. The core ids are still drawn from the train cap.",
     )
+    parser.add_argument(
+        "--with-nongame",
+        action="store_true",
+        help="With --core-only, also download non-game training clips. Game validation and test signers stay out.",
+    )
+    parser.add_argument("--progress", default="", help="Append one JSON status line per finished shard.")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -266,8 +279,10 @@ def main() -> None:
         args.nongame_cap,
         core_cap=args.core_cap,
     )
-    if args.core_only:
-        selected = [row for row in selected if row["split"] != "train" or row.get("core")]
+    selected = clips_to_extract(selected, core_only=args.core_only, with_nongame=args.with_nongame)
+    if args.core_only and args.with_nongame:
+        note["extracted"] = "validation, test, core train, and non-game train"
+    elif args.core_only:
         note["extracted"] = "validation, test, and core train"
     print(json.dumps({key: note[key] for key in ("labels", "caps", "gameCounts", "nongameTrain", "leakage") if key in note}, indent=2))
     out_dir = Path(args.out)
@@ -293,10 +308,16 @@ def main() -> None:
 
     ctx = mp.get_context("spawn")
     done = 0
+    progress_path = Path(args.progress) if args.progress else None
+    if progress_path is not None:
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
     with ctx.Pool(processes=max(1, args.workers)) as pool:
         for message in pool.imap_unordered(_worker, payloads):
             done += 1
             print(f"[{done}/{len(payloads)}] {message}", flush=True)
+            if progress_path is not None:
+                with progress_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps({"done": done, "total": len(payloads), "message": message}) + "\n")
             if message.startswith("ERR"):
                 raise SystemExit(message)
     metas = sorted((out_dir / "meta").glob("*.json"))

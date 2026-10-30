@@ -75,6 +75,24 @@ def _split_rows(records: list[dict], split: str) -> list[dict]:
     return _ordered(rows)
 
 
+def clips_to_extract(selected: list[dict], *, core_only: bool, with_nongame: bool) -> list[dict]:
+    """Download list for a memory-light cache build.
+
+    `--core-only` keeps official game validation, game test, and the core
+    training subset. Non-game rows are extra training clips and stay in that
+    list only when `with_nongame` is set. Without `core_only`, every selected
+    row is downloaded, including game train clips outside the core subset.
+    """
+    if not core_only:
+        return list(selected)
+    kept = []
+    for row in selected:
+        nongame_train = row.get("subset") == "non-game" and row.get("split") == "train"
+        if row["split"] != "train" or row.get("core") or (with_nongame and nongame_train):
+            kept.append(row)
+    return kept
+
+
 def choose(
     records: list[dict],
     train_cap: int,

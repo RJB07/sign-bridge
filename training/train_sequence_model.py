@@ -121,7 +121,25 @@ def per_class(logits: np.ndarray, target: np.ndarray, labels: list[str]) -> list
     return rows
 
 
-def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int, d_model: int = 128, layers: int = 2, ff: int = 320, dropout: float = 0.1, label_smoothing: float = 0.05, mixup: float = 0.0, strength: str = "base", patience: int = 10):
+def _save_resume(path: Path, model, opt, scheduler, epoch: int, best_state, best_top1: float, stale: int, history: list, done: bool) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "model": {key: value.detach().cpu() for key, value in model.state_dict().items()},
+            "opt": opt.state_dict(),
+            "scheduler": scheduler.state_dict(),
+            "epoch": epoch,
+            "best_state": best_state,
+            "best_top1": best_top1,
+            "stale": stale,
+            "history": history,
+            "done": done,
+        },
+        path,
+    )
+
+
+def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int, d_model: int = 128, layers: int = 2, ff: int = 320, dropout: float = 0.1, label_smoothing: float = 0.05, mixup: float = 0.0, strength: str = "base", patience: int = 10, checkpoint_dir: Path | None = None, resume: bool = False, preload: bool = True):
     torch.manual_seed(seed)
     np.random.seed(seed)
     model = SignTransformer(FEATURE_DIM, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=dropout).to(device)
@@ -131,7 +149,7 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
     cosine = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, epochs - 2))
     scheduler = torch.optim.lr_scheduler.SequentialLR(opt, [warmup, cosine], milestones=[2])
     train_loader = DataLoader(
-        SequenceDataset(train_rows, label_to_index, cache / "seq", True, seed, strength=strength),
+        SequenceDataset(train_rows, label_to_index, cache / "seq", True, seed, strength=strength, preload=preload),
         batch_size=batch_size,
         shuffle=True,
         num_workers=0,
@@ -140,7 +158,25 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
     best_top1 = -1.0
     stale = 0
     history = []
-    for epoch in range(1, epochs + 1):
+    start_epoch = 1
+    resume_path = checkpoint_dir / f"member-{seed}-resume.pt" if checkpoint_dir is not None else None
+    if resume and resume_path is not None and resume_path.exists():
+        payload = torch.load(resume_path, map_location="cpu", weights_only=False)
+        history = list(payload["history"])
+        best_state = payload["best_state"]
+        best_top1 = float(payload["best_top1"])
+        stale = int(payload["stale"])
+        if payload.get("done") and best_state is not None:
+            model.load_state_dict(best_state)
+            model.eval()
+            print({"seed": seed, "resumed": "done", "epoch": payload["epoch"], "valTop1": round(best_top1, 4)}, flush=True)
+            return model, history
+        model.load_state_dict(payload["model"])
+        opt.load_state_dict(payload["opt"])
+        scheduler.load_state_dict(payload["scheduler"])
+        start_epoch = int(payload["epoch"]) + 1
+        print({"seed": seed, "resumed": start_epoch, "valTop1": round(best_top1, 4)}, flush=True)
+    for epoch in range(start_epoch, epochs + 1):
         model.train()
         total = 0
         correct = 0
@@ -188,8 +224,13 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
             stale = 0
         else:
             stale += 1
-            if stale >= patience:
-                break
+        done = stale >= patience or epoch == epochs
+        if resume_path is not None:
+            _save_resume(resume_path, model, opt, scheduler, epoch, best_state, best_top1, stale, history, done)
+        if stale >= patience:
+            break
+    if best_state is None:
+        raise RuntimeError(f"seed {seed} finished without a validation checkpoint")
     model.load_state_dict(best_state)
     model.eval()
     return model, history
@@ -419,6 +460,8 @@ def main() -> None:
     parser.add_argument("--seeds", default="0,1,2")
     parser.add_argument("--experiment", default="default")
     parser.add_argument("--skip-student", action="store_true")
+    parser.add_argument("--resume", action="store_true", help="Continue finished seeds and in-progress epoch checkpoints under training/artifacts.")
+    parser.add_argument("--no-preload", action="store_true", help="Read sequences from disk each step. Use this when the training cache does not fit in memory.")
     args = parser.parse_args()
     seeds = [int(part) for part in args.seeds.split(",") if part.strip() != ""]
 
@@ -441,17 +484,31 @@ def main() -> None:
     torch.set_num_threads(4)
     counts = np.bincount([label_to_index[row["label"]] for row in splits["train"]], minlength=len(labels))
     class_weights = np.sqrt(counts.sum() / np.maximum(counts, 1) / len(labels)).astype(np.float32)
+    preload = not args.no_preload
     val_loader = DataLoader(
-        SequenceDataset(splits["validation"], label_to_index, cache / "seq", False, 2),
+        SequenceDataset(splits["validation"], label_to_index, cache / "seq", False, 2, preload=preload),
         batch_size=args.batch_size,
     )
     test_loader = DataLoader(
-        SequenceDataset(splits["test"], label_to_index, cache / "seq", False, 3),
+        SequenceDataset(splits["test"], label_to_index, cache / "seq", False, 3, preload=preload),
         batch_size=args.batch_size,
     )
     members = []
     history = []
+    artifact = Path("training/artifacts")
+    artifact.mkdir(parents=True, exist_ok=True)
     for seed in seeds:
+        final_path = artifact / f"member-{seed}.pt"
+        hist_path = artifact / f"member-{seed}-history.json"
+        if args.resume and final_path.exists() and hist_path.exists():
+            model = SignTransformer(FEATURE_DIM, len(labels), d_model=args.hidden, heads=4, layers=args.layers, ff=args.ff, dropout=0.0).to(device)
+            model.load_state_dict(torch.load(final_path, map_location=device, weights_only=True))
+            model.eval()
+            member_history = json.loads(hist_path.read_text(encoding="utf-8"))
+            members.append(model)
+            history.extend(member_history)
+            print({"seed": seed, "resumed": "saved"}, flush=True)
+            continue
         model, member_history = train_member(
             seed,
             len(labels),
@@ -471,12 +528,14 @@ def main() -> None:
             mixup=args.mixup,
             strength=args.augment,
             patience=args.patience,
+            checkpoint_dir=artifact,
+            resume=args.resume,
+            preload=preload,
         )
         members.append(model)
         history.extend(member_history)
-        artifact = Path("training/artifacts")
-        artifact.mkdir(parents=True, exist_ok=True)
-        torch.save(model.state_dict(), artifact / f"member-{seed}.pt")
+        torch.save(model.state_dict(), final_path)
+        hist_path.write_text(json.dumps(member_history), encoding="utf-8")
 
     ensemble = score_models(members, val_loader, test_loader, device)
     print(
