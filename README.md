@@ -39,21 +39,21 @@ The English sentence is the largest text on the screen. The gloss chips under it
 
 ## What you should expect
 
-The shipped recognizer is three landmark transformers (width 128, 2 layers, float16 weights) averaged together. It sees both hands, arm pose, and frame-to-frame motion. On PopSign’s official game signer split (31 train / 8 validation / 8 test, no shared signer), with at most 64 training clips and 20 validation and test clips per gloss from the full `sign/popsign-images` catalog:
+The shipped recognizer is three landmark transformers (width 128, 2 layers, float16 weights) averaged together. It sees both hands, arm pose, and frame-to-frame motion. Validation and test are PopSign’s official game signer split (8 and 8 signers, at most 20 clips per gloss). Training is the 64-per-gloss game core from the other 31 signers, plus every non-game training clip whose signer is outside those 16 validation and test signers. One of those non-game signers is not in the 31, so the training file has 32 signers. No validation or test signer is in training.
 
 | | |
 | --- | --- |
 | Gloss vocabulary | **250** English glosses, the full PopSign / Google ASL Signs list |
-| Train / val / test clips | 14,755 / 4,623 / 4,540 |
-| Test top-1 | **53.7%** |
-| Test top-5 | **77.9%** |
-| Macro recall | 53.7% |
+| Train / val / test clips | 40,139 / 4,623 / 4,540 |
+| Test top-1 | **53.9%** |
+| Test top-5 | **78.7%** |
+| Macro recall | 53.9% |
 | Chance top-1 | 0.4% |
-| Live gate on test | 75.9% precision when it commits, on 48.4% of clips |
+| Live gate on test | 77.3% precision when it commits, on 48.7% of clips |
 
-The previous shipped model was 50.6% top-1 and 75.1% top-5 on 2,744 test clips drawn from a partial shard download. This list is the same eight test signers and the same cap of 20 clips per gloss, taken from the complete catalog, so it is larger (4,540 clips after dropping sequences shorter than two frames). The 3.1 point top-1 gain is not a clip-by-clip comparison with those 2,744. Mirror test-time augmentation moved this run from 53.5% to 53.7%. Float16 weights matched that top-1, so the file stores float16 (about 3.0 MB). The distilled student was not trained for this export.
+The stored test scores are 0.5388 top-1 and 0.7874 top-5. The previous shipped model, trained on the 14,755 game core clips only, scored 0.5370 and 0.7793 on these same 4,540 test clips. Validation top-1 on the unchanged 4,623 clips fell from 53.8% to 52.2%. Of 27,547 indexed non-game clips, 25,384 were long enough to train on. Mirror test-time augmentation moved this run from 53.4% to 53.9%. Float16 weights matched that top-1, so the file stores float16 (about 2.9 MB). The distilled student was not trained for this export.
 
-A 32-gloss model earlier on this branch scored 59.1% top-1. That number is not comparable: this model chooses among 250 signs. Chance falls from 3.1% to 0.4%. Conversational glosses are in the 250. Per-class recall on this test list: hello 56% (18 clips), thank you 81% (16), please 50% (16), yes 59% (17), no 53% (19), water 67% (18), mom 63% (16), dad 65% (17). **Help is not in this 250-sign list.**
+An earlier model was 50.6% top-1 and 75.1% top-5 on 2,744 test clips drawn from a partial shard download. That list is smaller than these 4,540 clips, so it is not a paired comparison. A 32-gloss model earlier on this branch scored 59.1% top-1. That number is not comparable either: this model chooses among 250 signs. Chance falls from 3.1% to 0.4%. Conversational glosses are in the 250. Per-class recall on this test list: hello 44% (18 clips), thank you 88% (16), please 56% (16), yes 41% (17), no 53% (19), water 72% (18), mom 56% (16), dad 59% (17). **Help is not in this 250-sign list.**
 
 Per-class precision and recall: `training/metrics/asl_en_metrics.json`.
 
@@ -65,7 +65,7 @@ Fingerspelling letters A–Z, including J and Z, come from a static landmark net
 
 ## Dataset and license
 
-Training uses PopSign ASL v1.0 (game subset), CC BY 4.0, via the frame release [`sign/popsign-images`](https://huggingface.co/datasets/sign/popsign-images). Cite Starner et al., PopSign ASL v1.0 (2023). Landmark files are derived and are not a way to identify the signers.
+Training uses PopSign ASL v1.0 game frames plus non-game frames whose signers are outside the game validation and test partitions, CC BY 4.0, via the frame release [`sign/popsign-images`](https://huggingface.co/datasets/sign/popsign-images). Cite Starner et al., PopSign ASL v1.0 (2023). Landmark files are derived and are not a way to identify the signers.
 
 The download list is `training/download_popsign.py`. Shards are chosen so each trained gloss also appears in the official validation and test partitions. `training/splits.py` stops the run if any signer id appears in more than one partition.
 
@@ -87,9 +87,11 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r training/requirements.txt
 # Linux also needs libEGL and libGL for MediaPipe
 PYTHONPATH=training python training/scan_popsign.py
-PYTHONPATH=training python training/build_cache.py --train-cap 200 --nongame-cap 0 --core-only --workers 3
-PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --index index-core.jsonl --epochs 32 --patience 8 --batch-size 128 --seeds 0,1,2 --augment base --mixup 0 --label-smoothing 0.05 --experiment core64-base
+PYTHONPATH=training python training/build_cache.py --train-cap 200 --nongame-cap 100000 --core-only --with-nongame --workers 3
+PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --index index.jsonl --epochs 32 --patience 8 --batch-size 128 --seeds 0,1,2 --augment base --mixup 0 --label-smoothing 0.05 --experiment core64-nongame --skip-student --resume
 ```
+
+The 53.7% model used the same caps with `--nongame-cap 0` and `--index index-core.jsonl` (`experiment core64-base`). `--with-nongame` keeps that validation and test list and adds non-game training clips only.
 
 Extraction writes `training/cache/` (gitignored). The trainer compares a three-seed ensemble with a smaller distilled student, with and without mirror test-time augmentation, and it tries float16 weights when the test top-1 drop stays within half a point. It replaces `public/models/asl-en-sequence.json` only when the signer-disjoint test top-1 is higher than the file already there. Either way it writes `training/metrics/asl_en_run.json`.
 

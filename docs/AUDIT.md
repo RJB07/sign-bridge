@@ -41,9 +41,9 @@ American Sign Language only, English text out. `src/languages/aslEnglish.ts` is 
 
 ## Dataset
 
-Trained on **PopSign ASL v1.0** game clips in `sign/popsign-images` (CC BY 4.0). Official signer split: 31 / 8 / 8, no shared signer. The shipped run keeps at most 64 training clips and 20 validation and test clips per gloss from the full catalog: 14,755 / 4,623 / 4,540. Vocabulary is the full 250 PopSign / Google ASL Signs glosses.
+Trained on **PopSign ASL v1.0** in `sign/popsign-images` (CC BY 4.0). Official game signer split: 31 / 8 / 8, no shared signer. Validation and test stay that game list, at most 20 clips per gloss: 4,623 / 4,540, the same clips as the previous shipped model. Training is the 64-per-gloss game core (14,755 clips) plus 25,384 non-game clips (27,547 indexed, 2,163 shorter than two frames). Training has 32 signers. None of the 16 game validation or test signers are among them. Vocabulary is the full 250 PopSign / Google ASL Signs glosses.
 
-100% accuracy is not a realistic target. On the untouched test signers the shipped ensemble is **53.7% top-1** and **77.9% top-5** (chance 0.4%). The previous model on a smaller partial-shard draw of the same split was 50.6% top-1 and 75.1% top-5 (2,744 test clips). At the validation-chosen gate, test precision is 75.9% and the model commits on 48.4% of clips. An earlier 32-gloss model on this branch was 59.1% top-1; that was an easier decision and is not comparable.
+100% accuracy is not a realistic target. On the untouched test signers the shipped ensemble is **53.9% top-1** and **78.7% top-5** (stored 0.5388 / 0.7874, chance 0.4%). The previous weights on these same 4,540 clips were 53.7% top-1 and 77.9% top-5. Validation top-1 fell from 53.8% to 52.2%. The ship rule is test top-1, so these weights replaced that file. An earlier partial-shard draw of the same split was 50.6% top-1 and 75.1% top-5 (2,744 test clips). At the validation-chosen gate, test precision is 77.3% and the model commits on 48.7% of clips. An earlier 32-gloss model on this branch was 59.1% top-1; that was an easier decision and is not comparable.
 
 Hello, thank you, please, yes, and no are in the 250. Help is not. ASL Citizen and WLASL were not used.
 
