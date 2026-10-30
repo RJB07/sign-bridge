@@ -1,0 +1,17 @@
+{
+  "experiment": "core64-smoke",
+  "epochs": 3,
+  "patience": 3,
+  "seeds": [0],
+  "batchSize": 128,
+  "augment": "base",
+  "mixup": 0.0,
+  "labelSmoothing": 0.05,
+  "index": "index-core.jsonl",
+  "counts": {"train": 14755, "validation": 4623, "test": 4540},
+  "classes": 250,
+  "testTop1": 0.139,
+  "testTop5": null,
+  "validationTop1AtEpoch3": 0.119,
+  "note": "Three-epoch pipeline check on the full-catalog core split. The run logged ensemble test top-1 0.139 with mirror TTA, then stopped before writing asl_en_run.json because no validation confidence cleared the gate grid. Top-5 was not recorded. This is not the shipped accuracy."
+}

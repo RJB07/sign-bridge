@@ -381,6 +381,16 @@ def choose_threshold(logits: np.ndarray, target: np.ndarray) -> dict:
             )
     usable = [row for row in candidates if row["precision"] >= 0.72 and row["coverage"] >= 0.25]
     pool = usable or candidates
+    if not pool:
+        return {
+            "threshold": 0.85,
+            "margin": 0.16,
+            "precision": 0.0,
+            "coverage": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "candidates": [],
+        }
     best = max(pool, key=lambda row: (row["f1"], row["coverage"]))
     chosen = dict(best)
     chosen["candidates"] = sorted(candidates, key=lambda row: row["f1"], reverse=True)[:8]
