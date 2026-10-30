@@ -1,0 +1,1 @@
+{"name": "core64-base", "testTop1": 0.537, "testTop5": 0.7793, "validationTop1": 0.5384, "validationTop5": 0.8021, "members": 3, "dModel": 128, "layers": 2, "dtype": "f16", "tta": true, "shipped": true, "counts": {"train": 14755, "validation": 4623, "test": 4540}, "augment": "base", "mixup": 0.0, "labelSmoothing": 0.05}

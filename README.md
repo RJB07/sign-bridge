@@ -39,21 +39,21 @@ The English sentence is the largest text on the screen. The gloss chips under it
 
 ## What you should expect
 
-The shipped recognizer is three landmark transformers (width 128, 2 layers, float16 weights) averaged together. It sees both hands, arm pose, and frame-to-frame motion. On PopSign’s official signer split (31 train / 8 validation / 8 test, no shared signer):
+The shipped recognizer is three landmark transformers (width 128, 2 layers, float16 weights) averaged together. It sees both hands, arm pose, and frame-to-frame motion. On PopSign’s official game signer split (31 train / 8 validation / 8 test, no shared signer), with at most 64 training clips and 20 validation and test clips per gloss from the full `sign/popsign-images` catalog:
 
 | | |
 | --- | --- |
 | Gloss vocabulary | **250** English glosses, the full PopSign / Google ASL Signs list |
-| Train / val / test clips | 9198 / 2799 / 2744 |
-| Test top-1 | **50.6%** |
-| Test top-5 | **75.1%** |
-| Macro recall | 50.7% |
+| Train / val / test clips | 14,755 / 4,623 / 4,540 |
+| Test top-1 | **53.7%** |
+| Test top-5 | **77.9%** |
+| Macro recall | 53.7% |
 | Chance top-1 | 0.4% |
-| Live gate on test | 74.4% precision when it commits, on 43.2% of clips |
+| Live gate on test | 75.9% precision when it commits, on 48.4% of clips |
 
-The same test set, scored the same way, was 50.4% top-1 and 75.7% top-5 for the previous two-member model. This run’s gain is 5 clips out of 2,744. Mirror test-time augmentation added 0.04 points (50.58% to 50.62%). Float16 weights matched that top-1, so the file stores float16 (about 3.0 MB). A distilled one-member student reached 44.5% and was not shipped.
+The previous shipped model was 50.6% top-1 and 75.1% top-5 on 2,744 test clips drawn from a partial shard download. This list is the same eight test signers and the same cap of 20 clips per gloss, taken from the complete catalog, so it is larger (4,540 clips after dropping sequences shorter than two frames). The 3.1 point top-1 gain is not a clip-by-clip comparison with those 2,744. Mirror test-time augmentation moved this run from 53.5% to 53.7%. Float16 weights matched that top-1, so the file stores float16 (about 3.0 MB). The distilled student was not trained for this export.
 
-A 32-gloss model earlier on this branch scored 59.1% top-1. That number is not comparable: this model chooses among 250 signs. Chance falls from 3.1% to 0.4%. Conversational glosses are in the 250. Per-class recall on the small test counts: hello 64% (11 clips), thank you 63% (8), please 70% (10), yes 50% (10), no 60% (10), water 91% (11), mom 50% (12), dad 64% (11). **Help is not in this 250-sign list.**
+A 32-gloss model earlier on this branch scored 59.1% top-1. That number is not comparable: this model chooses among 250 signs. Chance falls from 3.1% to 0.4%. Conversational glosses are in the 250. Per-class recall on this test list: hello 56% (18 clips), thank you 81% (16), please 50% (16), yes 59% (17), no 53% (19), water 67% (18), mom 63% (16), dad 65% (17). **Help is not in this 250-sign list.**
 
 Per-class precision and recall: `training/metrics/asl_en_metrics.json`.
 
@@ -100,7 +100,7 @@ When a run is shipped it also writes:
 - `public/models/parity.json` — logits the browser port must match
 - `training/metrics/asl_en_metrics.json`
 
-The shipped vocabulary is already the full 250 PopSign glosses. `training/scan_popsign.py` indexes every game and non-game shard on `sign/popsign-images` with range requests, and `training/build_cache.py` downloads frames only for the selected clips. The published test number above is still the earlier partial-shard cache (2,744 test clips). A full-catalog cap of 20 clips per gloss is a larger test list, so a new top-1 on that list is not the same measurement. The Kaggle landmark release in `docs/KAGGLE_DATASETS.md` is still the native-frame-rate set and still needs a token.
+The shipped vocabulary is already the full 250 PopSign glosses. `training/scan_popsign.py` indexes every game and non-game shard on `sign/popsign-images` with range requests, and `training/build_cache.py` downloads frames only for the selected clips. The number above is that full-catalog game test list. The Kaggle landmark release in `docs/KAGGLE_DATASETS.md` is still the native-frame-rate set and still needs a token.
 
 ## Layout
 

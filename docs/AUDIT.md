@@ -41,9 +41,9 @@ American Sign Language only, English text out. `src/languages/aslEnglish.ts` is 
 
 ## Dataset
 
-Trained on **PopSign ASL v1.0** game clips in `sign/popsign-images` (CC BY 4.0). Official signer split: 31 / 8 / 8, no shared signer. 9,198 / 2,799 / 2,744 clips. Vocabulary is the full 250 PopSign / Google ASL Signs glosses.
+Trained on **PopSign ASL v1.0** game clips in `sign/popsign-images` (CC BY 4.0). Official signer split: 31 / 8 / 8, no shared signer. The shipped run keeps at most 64 training clips and 20 validation and test clips per gloss from the full catalog: 14,755 / 4,623 / 4,540. Vocabulary is the full 250 PopSign / Google ASL Signs glosses.
 
-100% accuracy is not a realistic target. On the untouched test signers the shipped ensemble is **50.6% top-1** and **75.1% top-5** (chance 0.4%). The previous two-member model on the same split was 50.4% top-1 and 75.7% top-5. At the validation-chosen gate, test precision is 74.4% and the model commits on 43.2% of clips. An earlier 32-gloss model on this branch was 59.1% top-1; that was an easier decision and is not comparable.
+100% accuracy is not a realistic target. On the untouched test signers the shipped ensemble is **53.7% top-1** and **77.9% top-5** (chance 0.4%). The previous model on a smaller partial-shard draw of the same split was 50.6% top-1 and 75.1% top-5 (2,744 test clips). At the validation-chosen gate, test precision is 75.9% and the model commits on 48.4% of clips. An earlier 32-gloss model on this branch was 59.1% top-1; that was an easier decision and is not comparable.
 
 Hello, thank you, please, yes, and no are in the 250. Help is not. ASL Citizen and WLASL were not used.
 
