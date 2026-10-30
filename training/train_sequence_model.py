@@ -951,6 +951,8 @@ def main() -> None:
     parser.add_argument("--init-dir", default="", help="Load member-{seed}-best.pt from this directory before training.")
     parser.add_argument("--distill-from", default="", help="Train the browser model from this teacher artifact directory. Does not score test.")
     parser.add_argument("--min-precision", type=float, default=0.72, help="Validation precision floor for the live gate.")
+    parser.add_argument("--boost-labels", default="", help="Comma-separated glosses whose training loss is multiplied by --boost.")
+    parser.add_argument("--boost", type=float, default=1.0)
     parser.add_argument("--artifact-dir", default="training/artifacts")
     parser.add_argument("--hold-test", action="store_true", help="Select on validation and do not score the test split.")
     parser.add_argument("--report-test", action="store_true", help="Score the saved validation selection on the test split once.")
@@ -991,6 +993,10 @@ def main() -> None:
     seq_dir = cache / (args.seq_subdir or ("seq-rich" if args.feature_layout == "rich" else "seq"))
     counts = np.bincount([label_to_index[row["label"]] for row in splits["train"]], minlength=len(labels))
     class_weights = np.sqrt(counts.sum() / np.maximum(counts, 1) / len(labels)).astype(np.float32)
+    if args.boost > 1 and args.boost_labels:
+        for name in [part.strip() for part in args.boost_labels.split(",") if part.strip()]:
+            if name in label_to_index:
+                class_weights[label_to_index[name]] *= args.boost
     preload = not args.no_preload
     eval_batch = max(args.batch_size, 256)
     val_loader = DataLoader(
