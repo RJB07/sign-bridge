@@ -10,3 +10,13 @@
 {"seed": 0, "epoch": 10, "trainLoss": 3.467, "trainTop1": 0.2872, "valTop1": 0.3868, "valTop5": 0.7078}
 {"seed": 0, "epoch": 11, "trainLoss": 3.3872, "trainTop1": 0.3012, "valTop1": 0.3984, "valTop5": 0.7164}
 {"seed": 0, "epoch": 12, "trainLoss": 3.3497, "trainTop1": 0.3075, "valTop1": 0.4199, "valTop5": 0.7307}
+{"seed": 0, "epoch": 13, "trainLoss": 3.2375, "trainTop1": 0.3423, "valTop1": 0.4238, "valTop5": 0.7411}
+{"seed": 0, "epoch": 14, "trainLoss": 3.1431, "trainTop1": 0.3421, "valTop1": 0.4341, "valTop5": 0.745}
+{"seed": 0, "epoch": 15, "trainLoss": 3.1119, "trainTop1": 0.3657, "valTop1": 0.4523, "valTop5": 0.7517}
+{"seed": 0, "epoch": 16, "trainLoss": 2.9952, "trainTop1": 0.368, "valTop1": 0.4369, "valTop5": 0.7493}
+{"seed": 0, "epoch": 17, "trainLoss": 2.9913, "trainTop1": 0.4, "valTop1": 0.4499, "valTop5": 0.7504}
+{"seed": 0, "epoch": 18, "trainLoss": 2.8491, "trainTop1": 0.402, "valTop1": 0.4592, "valTop5": 0.7592}
+{"seed": 0, "epoch": 19, "trainLoss": 2.9024, "trainTop1": 0.4011, "valTop1": 0.4713, "valTop5": 0.7683}
+{"seed": 0, "epoch": 20, "trainLoss": 2.7847, "trainTop1": 0.4327, "valTop1": 0.4612, "valTop5": 0.7562}
+{"seed": 0, "epoch": 21, "trainLoss": 2.7025, "trainTop1": 0.4388, "valTop1": 0.4724, "valTop5": 0.7614}
+{"seed": 0, "epoch": 22, "trainLoss": 2.6834, "trainTop1": 0.4488, "valTop1": 0.4886, "valTop5": 0.772}
