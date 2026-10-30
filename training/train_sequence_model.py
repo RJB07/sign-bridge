@@ -51,23 +51,29 @@ def round_float16(model: SignTransformer) -> SignTransformer:
 
 
 class SequenceDataset(Dataset):
-    def __init__(self, rows: list[dict], label_to_index: dict[str, int], seq_dir: Path, augment: bool, seed: int):
+    def __init__(self, rows: list[dict], label_to_index: dict[str, int], seq_dir: Path, augment: bool, seed: int, strength: str = "base", preload: bool = True):
         self.rows = rows
         self.label_to_index = label_to_index
         self.seq_dir = seq_dir
         self.augment = augment
         self.seed = seed
+        self.strength = strength
+        self.arrays = None
+        if preload:
+            self.arrays = [np.load(seq_dir / row["npy"]) for row in rows]
+            if len(rows) > 1000:
+                print(f"preloaded {len(rows)} sequences", flush=True)
 
     def __len__(self) -> int:
         return len(self.rows)
 
     def __getitem__(self, index: int):
         row = self.rows[index]
-        seq = np.load(self.seq_dir / row["npy"])
+        seq = self.arrays[index] if self.arrays is not None else np.load(self.seq_dir / row["npy"])
         if self.augment:
-            seq = augment_sequence(seq, np.random.default_rng())
+            seq = augment_sequence(seq, np.random.default_rng(), strength=self.strength)
         seq = resample_sequence(seq, SEQ_LEN)
-        x = torch.from_numpy(seq)
+        x = torch.from_numpy(np.ascontiguousarray(seq))
         y = self.label_to_index[row["label"]]
         return x, y
 
@@ -114,17 +120,20 @@ def per_class(logits: np.ndarray, target: np.ndarray, labels: list[str]) -> list
     return rows
 
 
-def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int):
+def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int, d_model: int = 128, layers: int = 2, ff: int = 320, dropout: float = 0.1, label_smoothing: float = 0.05, mixup: float = 0.0, strength: str = "base", patience: int = 10):
     torch.manual_seed(seed)
     np.random.seed(seed)
-    model = SignTransformer(FEATURE_DIM, n_classes, d_model=128, heads=4, layers=2, ff=320, dropout=0.1).to(device)
-    loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=0.05)
+    model = SignTransformer(FEATURE_DIM, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=dropout).to(device)
+    loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=label_smoothing)
     opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
+    warmup = torch.optim.lr_scheduler.LinearLR(opt, start_factor=0.2, total_iters=2)
+    cosine = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, epochs - 2))
+    scheduler = torch.optim.lr_scheduler.SequentialLR(opt, [warmup, cosine], milestones=[2])
     train_loader = DataLoader(
-        SequenceDataset(train_rows, label_to_index, cache / "seq", True, seed),
+        SequenceDataset(train_rows, label_to_index, cache / "seq", True, seed, strength=strength),
         batch_size=batch_size,
         shuffle=True,
+        num_workers=0,
     )
     best_state = None
     best_top1 = -1.0
@@ -139,8 +148,15 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
             x = x.to(device)
             y = y.to(device)
             opt.zero_grad()
-            logits = model(x)
-            loss = loss_fn(logits, y)
+            if mixup > 0 and x.size(0) > 1 and float(torch.rand(1)) < 0.5:
+                lam = float(np.random.beta(mixup, mixup))
+                order = torch.randperm(x.size(0), device=device)
+                mixed = lam * x + (1.0 - lam) * x[order]
+                logits = model(mixed)
+                loss = lam * loss_fn(logits, y) + (1.0 - lam) * loss_fn(logits, y[order])
+            else:
+                logits = model(x)
+                loss = loss_fn(logits, y)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
@@ -167,7 +183,7 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
             stale = 0
         else:
             stale += 1
-            if stale >= 10:
+            if stale >= patience:
                 break
     model.load_state_dict(best_state)
     model.eval()
@@ -374,13 +390,25 @@ def choose_threshold(logits: np.ndarray, target: np.ndarray) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache", default="training/cache")
+    parser.add_argument("--index", default="index.jsonl")
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--hidden", type=int, default=128)
+    parser.add_argument("--layers", type=int, default=2)
+    parser.add_argument("--ff", type=int, default=320)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--label-smoothing", type=float, default=0.05)
+    parser.add_argument("--mixup", type=float, default=0.0)
+    parser.add_argument("--augment", choices=("base", "strong"), default="base")
+    parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--seeds", default="0,1,2")
+    parser.add_argument("--experiment", default="default")
+    parser.add_argument("--skip-student", action="store_true")
     args = parser.parse_args()
+    seeds = [int(part) for part in args.seeds.split(",") if part.strip() != ""]
 
     cache = Path(args.cache)
-    rows = load_index(cache / "index.jsonl")
+    rows = load_index(cache / args.index)
     labels = sorted({row["label"] for row in rows if row["split"] == "train"})
     label_to_index = {label: i for i, label in enumerate(labels)}
     splits = {
@@ -408,9 +436,26 @@ def main() -> None:
     )
     members = []
     history = []
-    for seed in (0, 1, 2):
+    for seed in seeds:
         model, member_history = train_member(
-            seed, len(labels), class_weights, splits["train"], label_to_index, cache, val_loader, device, args.epochs, args.batch_size
+            seed,
+            len(labels),
+            class_weights,
+            splits["train"],
+            label_to_index,
+            cache,
+            val_loader,
+            device,
+            args.epochs,
+            args.batch_size,
+            d_model=args.hidden,
+            layers=args.layers,
+            ff=args.ff,
+            dropout=args.dropout,
+            label_smoothing=args.label_smoothing,
+            mixup=args.mixup,
+            strength=args.augment,
+            patience=args.patience,
         )
         members.append(model)
         history.extend(member_history)
@@ -428,19 +473,23 @@ def main() -> None:
         },
         flush=True,
     )
-    student, student_history = train_student(
-        members, len(labels), class_weights, splits["train"], label_to_index, cache, val_loader, device, batch_size=args.batch_size
-    )
-    history.extend(student_history)
-    student_score = score_models([student], val_loader, test_loader, device)
-    print(
-        {
-            "studentPlain": round(student_score["test_top1_plain"], 4),
-            "studentTta": round(student_score["test_top1_tta"], 4),
-            "studentChoice": round(student_score["test_top1"], 4),
-        },
-        flush=True,
-    )
+    if args.skip_student:
+        student_score = {"test_top1": -1.0, "test_top1_plain": -1.0, "test_top1_tta": -1.0}
+        print({"student": "skipped"}, flush=True)
+    else:
+        student, student_history = train_student(
+            members, len(labels), class_weights, splits["train"], label_to_index, cache, val_loader, device, batch_size=args.batch_size
+        )
+        history.extend(student_history)
+        student_score = score_models([student], val_loader, test_loader, device)
+        print(
+            {
+                "studentPlain": round(student_score["test_top1_plain"], 4),
+                "studentTta": round(student_score["test_top1_tta"], 4),
+                "studentChoice": round(student_score["test_top1"], 4),
+            },
+            flush=True,
+        )
     ship_student = student_score["test_top1"] + 1e-9 >= ensemble["test_top1"] - 0.01
     chosen = student_score if ship_student else ensemble
     rounded = [round_float16(model) for model in chosen["models"]]
@@ -498,6 +547,21 @@ def main() -> None:
 
     focus = ["hello", "thankyou", "please", "yes", "no", "water", "mom", "dad"]
     focus_rows = [row for row in test_per_class if row["label"] in focus]
+    uses_nongame = any(row.get("subset") == "non-game" for row in rows)
+    if uses_nongame:
+        dataset_note = (
+            "PopSign ASL v1.0 game and non-game frames (CC BY 4.0, sign/popsign-images), "
+            "MediaPipe Holistic landmarks. Same 250 glosses as Google ASL Signs. "
+            "Non-game clips are training only and exclude game validation and test signers. "
+            "ASL Citizen and WLASL were not used because their licenses do not allow shipping derived weights."
+        )
+        dataset_subset = "game frames, plus non-game training clips whose signers are outside the game validation and test partitions"
+    else:
+        dataset_note = (
+            "PopSign ASL v1.0 game images (CC BY 4.0), MediaPipe Holistic landmarks. "
+            "Same 250 glosses as Google ASL Signs. ASL Citizen and WLASL were not used because their licenses do not allow shipping derived weights."
+        )
+        dataset_subset = "game images via sign/popsign-images"
 
     metrics = {
         "task": "isolated ASL gloss to English",
@@ -506,8 +570,9 @@ def main() -> None:
         "architecture": (
             f"{'distilled student' if ship_student else 'ensemble of ' + str(len(final_models))}"
             f", d={final_models[0].d_model}, layers={len(final_models[0].blocks)}, dtype={dtype}, tta={str(use_tta).lower()}"
+            f", augment={args.augment}, mixup={args.mixup}, labelSmoothing={args.label_smoothing}"
         ),
-        "dataset": "PopSign ASL v1.0 game images (CC BY 4.0), MediaPipe Holistic landmarks. Same 250 glosses as Google ASL Signs. ASL Citizen and WLASL were not used because their licenses do not allow shipping derived weights.",
+        "dataset": dataset_note,
         "split": "official PopSign train/validation/test, signer-disjoint",
         "signerLeakage": leakage,
         "signers": {name: sorted(values) for name, values in signers.items()},
@@ -562,7 +627,42 @@ def main() -> None:
             baseline = 0.5044
     metrics["previousShippedTestTop1"] = baseline
     metrics["replacedShippedModel"] = bool(test_top1 > baseline + 1e-4)
+    metrics["experiment"] = {
+        "name": args.experiment,
+        "seeds": seeds,
+        "epochs": args.epochs,
+        "augment": args.augment,
+        "mixup": args.mixup,
+        "labelSmoothing": args.label_smoothing,
+        "dropout": args.dropout,
+        "patience": args.patience,
+        "dModel": args.hidden,
+        "layers": args.layers,
+        "ff": args.ff,
+    }
+    note_path = cache / "data_note.json"
+    if note_path.exists():
+        metrics["dataNote"] = json.loads(note_path.read_text(encoding="utf-8"))
     (metrics_dir / "asl_en_run.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    experiment_row = {
+        "name": args.experiment,
+        "testTop1": metrics["testTop1"],
+        "testTop5": metrics["testTop5"],
+        "validationTop1": metrics["validationTop1"],
+        "validationTop5": metrics["validationTop5"],
+        "members": len(final_models),
+        "dModel": final_models[0].d_model,
+        "layers": len(final_models[0].blocks),
+        "dtype": dtype,
+        "tta": use_tta,
+        "shipped": metrics["replacedShippedModel"],
+        "counts": metrics["counts"],
+        "augment": args.augment,
+        "mixup": args.mixup,
+        "labelSmoothing": args.label_smoothing,
+    }
+    with (metrics_dir / "experiments.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(experiment_row) + "\n")
     if not metrics["replacedShippedModel"]:
         summary = {
             "replacedShippedModel": False,
@@ -602,7 +702,7 @@ def main() -> None:
         "tta": use_tta,
         "dataset": {
             "name": "PopSign ASL v1.0",
-            "subset": "game images via sign/popsign-images",
+            "subset": dataset_subset,
             "license": "CC BY 4.0",
             "url": "https://signdata.cc.gatech.edu/",
             "huggingface": "https://huggingface.co/datasets/sign/popsign-images",

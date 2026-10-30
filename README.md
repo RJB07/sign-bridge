@@ -86,9 +86,9 @@ Not used for the model, and why:
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r training/requirements.txt
 # Linux also needs libEGL and libGL for MediaPipe
-PYTHONPATH=training python training/download_popsign.py
-PYTHONPATH=training python training/extract_landmarks.py
-PYTHONPATH=training python training/train_sequence_model.py
+PYTHONPATH=training python training/scan_popsign.py
+PYTHONPATH=training python training/build_cache.py --train-cap 200 --nongame-cap 0 --core-only --workers 3
+PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --index index-core.jsonl --epochs 32 --patience 8 --batch-size 128 --seeds 0,1,2 --augment base --mixup 0 --label-smoothing 0.05 --experiment core64-base
 ```
 
 Extraction writes `training/cache/` (gitignored). The trainer compares a three-seed ensemble with a smaller distilled student, with and without mirror test-time augmentation, and it tries float16 weights when the test top-1 drop stays within half a point. It replaces `public/models/asl-en-sequence.json` only when the signer-disjoint test top-1 is higher than the file already there. Either way it writes `training/metrics/asl_en_run.json`.
@@ -100,7 +100,7 @@ When a run is shipped it also writes:
 - `public/models/parity.json` — logits the browser port must match
 - `training/metrics/asl_en_metrics.json`
 
-The shipped vocabulary is already the full 250 PopSign glosses. A larger download of the same signs is the Kaggle landmark release in `docs/KAGGLE_DATASETS.md`, not more PopSign image shards.
+The shipped vocabulary is already the full 250 PopSign glosses. `training/scan_popsign.py` indexes every game and non-game shard on `sign/popsign-images` with range requests, and `training/build_cache.py` downloads frames only for the selected clips. The published test number above is still the earlier partial-shard cache (2,744 test clips). A full-catalog cap of 20 clips per gloss is a larger test list, so a new top-1 on that list is not the same measurement. The Kaggle landmark release in `docs/KAGGLE_DATASETS.md` is still the native-frame-rate set and still needs a token.
 
 ## Layout
 

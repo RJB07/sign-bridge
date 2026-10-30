@@ -12,6 +12,9 @@ import numpy as np
 FEATURE_DIM = 273
 SEQ_LEN = 32
 POSE_INDEXES = (0, 11, 12, 13, 14, 15, 16)
+# Outer mouth, lips, and chin. Stored on the raw cache for ablations. The live
+# feature vector does not include these until a run shows they raise test top-1.
+LIP_INDEXES = (13, 14, 17, 61, 78, 81, 84, 87, 91, 146, 291, 308)
 
 
 def _xy_dist(a: np.ndarray, b: np.ndarray) -> float:
@@ -148,35 +151,51 @@ def mirror_sequence(seq: np.ndarray) -> np.ndarray:
     return out
 
 
-def augment_sequence(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """Time warp, mirror, rotation, scale, one dropped landmark, and light noise.
+def augment_sequence(seq: np.ndarray, rng: np.random.Generator, strength: str = "base") -> np.ndarray:
+    """Time warp, mirror, rotation, scale, dropped landmarks, and light noise.
 
-    PopSign clips are only a handful of frames, so the ranges stay tight enough
-    that the gloss is still recognizable. Mirror is the left-hand stand-in.
+    `strength="strong"` widens those ranges, crops time, shifts the position
+    channels (not the velocity block), and drops more landmarks. PopSign clips
+    are short, so a crop never goes below four frames. Mirror stands in for a
+    left-hand signer.
     """
     seq = np.array(seq, dtype=np.float32, copy=True)
-    if seq.shape[0] > 4 and rng.random() < 0.75:
-        low = max(3, int(seq.shape[0] * 0.75))
-        high = min(48, max(low + 1, int(round(seq.shape[0] * 1.35)) + 1))
+    strong = strength == "strong"
+    if seq.shape[0] > 4 and rng.random() < (0.85 if strong else 0.75):
+        low_frac = 0.55 if strong else 0.75
+        high_frac = 1.6 if strong else 1.35
+        low = max(3, int(seq.shape[0] * low_frac))
+        high = min(48, max(low + 1, int(round(seq.shape[0] * high_frac)) + 1))
         seq = resample_sequence(seq, int(rng.integers(low, high)))
-    if seq.shape[0] > 6 and rng.random() < 0.35:
-        drop = int(rng.integers(0, seq.shape[0]))
-        seq = np.delete(seq, drop, axis=0)
+    if strong and seq.shape[0] > 6 and rng.random() < 0.55:
+        span = int(rng.integers(max(4, int(seq.shape[0] * 0.65)), seq.shape[0] + 1))
+        start = int(rng.integers(0, seq.shape[0] - span + 1))
+        seq = seq[start : start + span]
+    if seq.shape[0] > 6 and rng.random() < (0.5 if strong else 0.35):
+        seq = np.delete(seq, int(rng.integers(0, seq.shape[0])), axis=0)
     if rng.random() < 0.5:
         seq = mirror_sequence(seq)
-    angle = float(rng.uniform(-0.28, 0.28))
-    c, s = np.cos(angle), np.sin(angle)
+    angle = float(rng.uniform(-0.4, 0.4) if strong else rng.uniform(-0.28, 0.28))
+    cosine, sine = np.cos(angle), np.sin(angle)
     flat = seq.reshape(seq.shape[0], -1, 3)
     x = flat[:, :, 0].copy()
     y = flat[:, :, 1].copy()
-    flat[:, :, 0] = c * x - s * y
-    flat[:, :, 1] = s * x + c * y
+    flat[:, :, 0] = cosine * x - sine * y
+    flat[:, :, 1] = sine * x + cosine * y
     seq = flat.reshape(seq.shape[0], -1)
-    seq *= float(rng.uniform(0.85, 1.15))
-    if rng.random() < 0.3:
+    seq *= float(rng.uniform(0.75, 1.25) if strong else rng.uniform(0.85, 1.15))
+    if strong and seq.shape[1] >= 147 and (seq.shape[1] - 126) % 3 == 0:
+        n_pos = (seq.shape[1] - 126) // 3
+        shift = rng.uniform(-0.1, 0.1, size=(1, 1, 3)).astype(np.float32)
+        flat = seq.reshape(seq.shape[0], -1, 3)
+        flat[:, :n_pos, :] += shift
+        seq = flat.reshape(seq.shape[0], -1)
+    drops = 2 if strong and rng.random() < 0.7 else (1 if rng.random() < 0.3 else 0)
+    for _ in range(drops):
         landmark = int(rng.integers(0, 21))
         seq[:, landmark * 3 : landmark * 3 + 3] = 0
         if seq.shape[1] >= 210:
             seq[:, 147 + landmark * 3 : 147 + landmark * 3 + 3] = 0
-    seq += rng.normal(0.0, 0.012, size=seq.shape).astype(np.float32)
+    noise = 0.02 if strong else 0.012
+    seq += rng.normal(0.0, noise, size=seq.shape).astype(np.float32)
     return seq.astype(np.float32)
