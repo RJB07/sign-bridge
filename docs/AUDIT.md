@@ -45,6 +45,8 @@ Trained on **PopSign ASL v1.0** in `sign/popsign-images` (CC BY 4.0). Official g
 
 100% accuracy is not a realistic target. On the untouched test signers the shipped ensemble is **55.2% top-1** and **78.1% top-5** (stored 0.5515 / 0.7806, chance 0.4%). The previous weights on these same 4,540 clips were 53.9% top-1 and 78.7% top-5. Validation top-1 rose from 52.2% to 53.1%. The ship rule is test top-1, so these weights replaced that file. An earlier partial-shard draw of the same split was 50.6% top-1 and 75.1% top-5 (2,744 test clips). At the validation-chosen gate, test precision is 78.1% and the model commits on 49.9% of clips. An earlier 32-gloss model on this branch was 59.1% top-1; that was an easier decision and is not comparable.
 
+A follow-up on the same validation clips did not change the file. The browser can divide logits by a temperature before the softmax; the fit on this ensemble is 1.12 and the argmax stays put. Raising the validation precision target from about 72% to 80% cuts coverage from 58.7% to 41.9%. Validation confusions cluster on near pairs (pen/pencil, cheek/eye, mouth/lips, awake/wake). A width-256 teacher with mixup reached 50.5% top-1 there and is too slow to ship (124 ms for one member). Blending it with the shipped ensemble reached 53.3% top-1 and 79.1% top-5. The test list was not opened for that comparison.
+
 Hello, thank you, please, yes, and no are in the 250. Help is not. ASL Citizen and WLASL were not used.
 
 Fingerspelling A–Z, including J and Z, is trained on `sid220/asl-now-fingerspelling` (MIT). Filename-hash test top-1 is 92.3%. That split is not signer-independent because the files have no participant id.

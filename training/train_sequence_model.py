@@ -184,6 +184,8 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
     )
     best_state = None
     best_top1 = -1.0
+    best_top5 = 0.0
+    peak_top1 = -1.0
     stale = 0
     history = []
     start_epoch = 1
@@ -193,6 +195,8 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
         history = list(payload["history"])
         best_state = payload["best_state"]
         best_top1 = float(payload["best_top1"])
+        best_top5 = float(payload.get("best_top5", 0.0))
+        peak_top1 = best_top1
         stale = int(payload["stale"])
         if payload.get("done") and best_state is not None:
             model.load_state_dict(best_state)
@@ -208,8 +212,10 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
         init_logits, init_y = evaluate(model, val_loader, device, tta=False)
         init_top1 = ranked_accuracy(init_logits, init_y, 1)
         best_top1 = init_top1
+        best_top5 = ranked_accuracy(init_logits, init_y, 5)
+        peak_top1 = init_top1
         best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-        print({"seed": seed, "initValTop1": round(init_top1, 4), "initValTop5": round(ranked_accuracy(init_logits, init_y, 5), 4)}, flush=True)
+        print({"seed": seed, "initValTop1": round(init_top1, 4), "initValTop5": round(best_top5, 4)}, flush=True)
     for epoch in range(start_epoch, epochs + 1):
         model.train()
         total = 0
@@ -252,8 +258,13 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
         if live_path:
             with open(live_path, "a", encoding="utf-8") as live:
                 live.write(json.dumps(row) + "\n")
-        if val_top1 > best_top1 + 1e-4:
+        if val_top1 > peak_top1:
+            peak_top1 = val_top1
+        # Keep a checkpoint that gives up a little top-1 when top-5 rises. The band is 0.3 points.
+        keep = val_top1 > best_top1 + 1e-4 or (val_top1 >= peak_top1 - 0.003 and val_top5 > best_top5 + 1e-4)
+        if keep:
             best_top1 = val_top1
+            best_top5 = val_top5
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             stale = 0
         else:
