@@ -152,6 +152,28 @@ function layerNorm(x: Float32Array, rows: number, cols: number, weight: Float32A
   return out;
 }
 
+function conv1dSame(x: Float32Array, time: number, channels: number, weight: Float32Array, bias: Float32Array, kernel: number): Float32Array {
+  const outCh = bias.length;
+  const out = new Float32Array(time * outCh);
+  const pad = Math.floor(kernel / 2);
+  for (let t = 0; t < time; t++) {
+    for (let oc = 0; oc < outCh; oc++) {
+      let sum = bias[oc];
+      const wBase = oc * channels * kernel;
+      for (let ic = 0; ic < channels; ic++) {
+        const icBase = wBase + ic * kernel;
+        for (let k = 0; k < kernel; k++) {
+          const src = t + k - pad;
+          if (src < 0 || src >= time) continue;
+          sum += x[src * channels + ic] * weight[icBase + k];
+        }
+      }
+      out[t * outCh + oc] = sum;
+    }
+  }
+  return out;
+}
+
 function mha(x: Float32Array, time: number, dim: number, inW: Float32Array, inB: Float32Array, outW: Float32Array, outB: Float32Array, heads: number): Float32Array {
   const qkv = linear(x, time, dim, inW, inB);
   const dHead = dim / heads;
@@ -202,6 +224,20 @@ export function logitsForMember(sequence: number[][], blob: WeightBlob, dModel: 
   const projB = tensor(blob, 'proj.bias');
   const pos = tensor(blob, 'pos');
   let h = linear(flat, time, feat, proj.data, projB.data);
+  if (blob.weights['conv1.weight']) {
+    const conv1 = tensor(blob, 'conv1.weight');
+    const conv1Bias = tensor(blob, 'conv1.bias');
+    let y = conv1dSame(h, time, dModel, conv1.data, conv1Bias.data, conv1.shape[2]);
+    for (let i = 0; i < y.length; i++) if (y[i] < 0) y[i] = 0;
+    const conv2 = tensor(blob, 'conv2.weight');
+    const conv2Bias = tensor(blob, 'conv2.bias');
+    y = conv1dSame(y, time, conv2.shape[1], conv2.data, conv2Bias.data, conv2.shape[2]);
+    for (let i = 0; i < y.length; i++) if (y[i] < 0) y[i] = 0;
+    const stemLn = tensor(blob, 'stem_ln.weight');
+    const stemBias = tensor(blob, 'stem_ln.bias');
+    y = layerNorm(y, time, dModel, stemLn.data, stemBias.data);
+    for (let i = 0; i < h.length; i++) h[i] += y[i];
+  }
   for (let t = 0; t < time; t++) {
     for (let d = 0; d < dModel; d++) h[t * dModel + d] += pos.data[t * dModel + d];
   }

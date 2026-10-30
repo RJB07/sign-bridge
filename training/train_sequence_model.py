@@ -45,6 +45,8 @@ def round_float16(model: SignTransformer) -> SignTransformer:
         layers=len(model.blocks),
         ff=model.ff,
         dropout=0.0,
+        seq_len=int(model.pos.shape[1]),
+        stem=model.stem,
     )
     state = {key: value.detach().cpu().to(torch.float16).to(torch.float32) for key, value in model.state_dict().items()}
     rounded.load_state_dict(state)
@@ -125,6 +127,7 @@ def per_class(logits: np.ndarray, target: np.ndarray, labels: list[str]) -> list
 
 def _save_resume(path: Path, model, opt, scheduler, epoch: int, best_state, best_top1: float, stale: int, history: list, done: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
     torch.save(
         {
             "model": {key: value.detach().cpu() for key, value in model.state_dict().items()},
@@ -137,18 +140,35 @@ def _save_resume(path: Path, model, opt, scheduler, epoch: int, best_state, best
             "history": history,
             "done": done,
         },
-        path,
+        tmp,
     )
+    os.replace(tmp, path)
 
 
-def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int, d_model: int = 128, layers: int = 2, ff: int = 320, dropout: float = 0.1, label_smoothing: float = 0.05, mixup: float = 0.0, strength: str = "base", patience: int = 10, checkpoint_dir: Path | None = None, resume: bool = False, preload: bool = True, feature_dim: int = FEATURE_DIM, layout: str = "legacy", seq_dir: Path | None = None, lr: float = 1e-3, warmup_epochs: int = 2, lr_min: float = 0.0):
+def _publish_best(seed: int, best_state, history: list) -> None:
+    """Copy the best weights to a tracked folder so a commit can outlive the VM."""
+    if best_state is None:
+        return
+    name = os.environ.get("SIGNBRIDGE_EXPERIMENT", "").strip()
+    if not name:
+        return
+    tracked = Path("training/checkpoints") / name
+    tracked.mkdir(parents=True, exist_ok=True)
+    best_path = tracked / f"member-{seed}-best.pt"
+    tmp = best_path.with_suffix(".tmp")
+    torch.save(best_state, tmp)
+    os.replace(tmp, best_path)
+    (tracked / f"member-{seed}-history.json").write_text(json.dumps(history), encoding="utf-8")
+
+
+def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int, d_model: int = 128, layers: int = 2, ff: int = 320, dropout: float = 0.1, label_smoothing: float = 0.05, mixup: float = 0.0, strength: str = "base", patience: int = 10, checkpoint_dir: Path | None = None, resume: bool = False, preload: bool = True, feature_dim: int = FEATURE_DIM, layout: str = "legacy", seq_dir: Path | None = None, lr: float = 1e-3, warmup_epochs: int = 2, lr_min: float = 0.0, stem: bool = False, weight_decay: float = 1e-4):
     torch.manual_seed(seed)
     np.random.seed(seed)
     if d_model % 4 != 0:
         raise ValueError(f"d_model {d_model} must be divisible by 4 heads")
-    model = SignTransformer(feature_dim, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=dropout).to(device)
+    model = SignTransformer(feature_dim, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=dropout, stem=stem).to(device)
     loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=label_smoothing)
-    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     warmup_steps = max(1, warmup_epochs)
     warmup = torch.optim.lr_scheduler.LinearLR(opt, start_factor=0.2, total_iters=warmup_steps)
     cosine = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, epochs - warmup_steps), eta_min=lr_min)
@@ -233,6 +253,8 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
         done = stale >= patience or epoch == epochs
         if resume_path is not None:
             _save_resume(resume_path, model, opt, scheduler, epoch, best_state, best_top1, stale, history, done)
+        if epoch % 8 == 0 or done:
+            _publish_best(seed, best_state, history)
         if stale >= patience:
             break
     if best_state is None:
@@ -639,6 +661,7 @@ def hold_out_selection(args, members, history, labels, class_weights, splits, la
         "layers": len(chosen["models"][0].blocks),
         "ff": chosen["models"][0].ff,
         "heads": chosen["models"][0].heads,
+        "stem": bool(getattr(chosen["models"][0], "stem", False)),
         "useTta": chosen["use_tta"],
         "dtype": chosen["dtype"],
         "shipStudent": ship_student,
@@ -664,6 +687,8 @@ def hold_out_selection(args, members, history, labels, class_weights, splits, la
         "epochs": args.epochs,
         "warmup": args.warmup,
         "lr": args.lr,
+        "weightDecay": args.weight_decay,
+        "teacherStem": bool(args.stem),
         "testReported": False,
         "previousValidationTop1": PREVIOUS_VAL_TOP1,
         "previousTestTop1": PREVIOUS_TEST_TOP1,
@@ -701,6 +726,8 @@ def main() -> None:
     parser.add_argument("--seq-subdir", default="", help="Sequence folder under the cache. Defaults to seq-rich or seq.")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--lr-min", type=float, default=0.0)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--stem", action="store_true", help="Add a residual temporal conv stem (kernel 5, then 3) before attention.")
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--artifact-dir", default="training/artifacts")
     parser.add_argument("--hold-test", action="store_true", help="Select on validation and do not score the test split.")
@@ -759,7 +786,7 @@ def main() -> None:
         final_path = artifact / f"member-{seed}.pt"
         hist_path = artifact / f"member-{seed}-history.json"
         if args.resume and final_path.exists() and hist_path.exists():
-            model = SignTransformer(feature_dim, len(labels), d_model=args.hidden, heads=4, layers=args.layers, ff=args.ff, dropout=0.0).to(device)
+            model = SignTransformer(feature_dim, len(labels), d_model=args.hidden, heads=4, layers=args.layers, ff=args.ff, dropout=0.0, stem=args.stem).to(device)
             model.load_state_dict(torch.load(final_path, map_location=device, weights_only=True))
             model.eval()
             member_history = json.loads(hist_path.read_text(encoding="utf-8"))
@@ -795,6 +822,8 @@ def main() -> None:
             lr=args.lr,
             warmup_epochs=args.warmup,
             lr_min=args.lr_min,
+            stem=args.stem,
+            weight_decay=args.weight_decay,
         )
         members.append(model)
         history.extend(member_history)
@@ -1167,7 +1196,7 @@ def report_test(args) -> None:
     )
 
     def load_model(path: Path, d_model: int, layers: int, ff: int) -> SignTransformer:
-        model = SignTransformer(feature_dim, len(labels), d_model=d_model, heads=int(selection["heads"]), layers=layers, ff=ff, dropout=0.0)
+        model = SignTransformer(feature_dim, len(labels), d_model=d_model, heads=int(selection["heads"]), layers=layers, ff=ff, dropout=0.0, stem=bool(selection.get("stem", False)))
         model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
         model.eval()
         return model
@@ -1245,7 +1274,7 @@ def report_test(args) -> None:
         "architecture": (
             f"{kind}, d={models[0].d_model}, layers={len(models[0].blocks)}, dtype={selection['dtype']}, "
             f"tta={str(use_tta).lower()}, augment={selection['augment']}, mixup={selection['mixup']}, "
-            f"labelSmoothing={selection['labelSmoothing']}, features={layout}"
+            f"labelSmoothing={selection['labelSmoothing']}, features={layout}, stem={str(bool(selection.get('stem', False))).lower()}"
         ),
         "dataset": (
             "PopSign ASL v1.0 game and non-game frames (CC BY 4.0, sign/popsign-images), "

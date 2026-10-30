@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import smoke from './transformer-smoke.json';
+import stemSmoke from './transformer-stem-smoke.json';
 import { decodeF16, decodeF32, float16BitsToFloat32, logitsForSequence, modelFromJson, predictSequence } from './sequenceModel';
 
 describe('landmark transformer', () => {
@@ -34,6 +35,21 @@ describe('landmark transformer', () => {
     let max = 0;
     for (let i = 0; i < expected.length; i++) max = Math.max(max, Math.abs(actual[i] - expected[i]));
     expect(max).toBeLessThan(1e-3);
+  });
+
+  it('matches PyTorch when a temporal conv stem is present', () => {
+    const model = modelFromJson(stemSmoke);
+    const flat = decodeF32(stemSmoke.input);
+    const sequence: number[][] = [];
+    for (let t = 0; t < model.seqLen; t++) {
+      sequence.push(Array.from(flat.slice(t * model.featureDim, (t + 1) * model.featureDim)));
+    }
+    const actual = logitsForSequence(model, sequence);
+    const expected = decodeF32(stemSmoke.logits);
+    let max = 0;
+    for (let i = 0; i < expected.length; i++) max = Math.max(max, Math.abs(actual[i] - expected[i]));
+    expect(max).toBeLessThan(1e-4);
+    expect(model.members[0].weights['conv1.weight']).toBeTruthy();
   });
 
   it('decodes float16 weights and can score with one ensemble member', () => {
