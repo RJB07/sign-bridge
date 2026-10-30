@@ -169,3 +169,14 @@
 {"done": 168, "total": 203, "message": "wrote 142 from data/game/validation-00022-of-00030.parquet groups=[0, 1, 2, 3]"}
 {"done": 169, "total": 203, "message": "wrote 139 from data/game/validation-00024-of-00030.parquet groups=[0, 1, 2, 3]"}
 {"done": 170, "total": 203, "message": "wrote 180 from data/game/validation-00023-of-00030.parquet groups=[0, 1, 2, 3]"}
+{"done": 171, "total": 203, "message": "wrote 150 from data/game/validation-00025-of-00030.parquet groups=[0, 1, 2, 3]"}
+{"done": 172, "total": 203, "message": "wrote 150 from data/game/validation-00026-of-00030.parquet groups=[0, 1, 2, 3]"}
+{"done": 173, "total": 203, "message": "wrote 140 from data/game/validation-00027-of-00030.parquet groups=[0, 1, 2, 3]"}
+{"done": 174, "total": 203, "message": "wrote 129 from data/game/validation-00028-of-00030.parquet groups=[0, 1, 2, 3]"}
+{"done": 175, "total": 203, "message": "wrote 122 from data/game/validation-00029-of-00030.parquet groups=[0, 1, 2]"}
+{"done": 176, "total": 203, "message": "wrote 918 from data/non-game/train-00002-of-00028.parquet groups=[0, 1, 2, 3, 4]"}
+{"done": 177, "total": 203, "message": "wrote 926 from data/non-game/train-00000-of-00028.parquet groups=[0, 1, 2, 3, 4, 5]"}
+{"done": 178, "total": 203, "message": "wrote 927 from data/non-game/train-00001-of-00028.parquet groups=[0, 1, 2, 3, 4, 5]"}
+{"done": 179, "total": 203, "message": "wrote 914 from data/non-game/train-00004-of-00028.parquet groups=[0, 1, 2, 3, 4]"}
+{"done": 180, "total": 203, "message": "wrote 936 from data/non-game/train-00003-of-00028.parquet groups=[0, 1, 2, 3, 4, 5]"}
+{"done": 181, "total": 203, "message": "wrote 914 from data/non-game/train-00005-of-00028.parquet groups=[0, 1, 2, 3, 4, 5]"}
