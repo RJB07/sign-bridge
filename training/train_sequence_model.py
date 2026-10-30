@@ -293,13 +293,14 @@ def evaluate(model, loader, device, tta: bool = False) -> tuple[np.ndarray, np.n
     return np.concatenate(logits_all), np.concatenate(target_all)
 
 
-def train_student(teachers, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int = 18, batch_size: int = 64, feature_dim: int = FEATURE_DIM, d_model: int = 64, layers: int = 2, ff: int = 160, layout: str = "legacy", strength: str = "base", seq_dir: Path | None = None, patience: int = 6):
+def train_student(teachers, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int = 18, batch_size: int = 64, feature_dim: int = FEATURE_DIM, d_model: int = 64, layers: int = 2, ff: int = 160, layout: str = "legacy", strength: str = "base", seq_dir: Path | None = None, patience: int = 6, seed: int = 7, label_smoothing: float = 0.05, mixup: float = 0.0, lr: float = 1e-3, distill_temperature: float = 2.0):
     """Distill the ensemble into one smaller transformer for phones.
 
     Teacher logits are cached on the clean training sequences. The student
     still sees augmented copies of those sequences, with the clean soft target.
     """
-    torch.manual_seed(7)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     student = SignTransformer(feature_dim, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=0.05).to(device)
     for teacher in teachers:
         teacher.eval()
@@ -325,10 +326,10 @@ def train_student(teachers, n_classes: int, class_weights: np.ndarray, train_row
             x, y = base[index]
             return x, y, soft_all[index]
 
-    loss_hard = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=0.05)
-    opt = torch.optim.AdamW(student.parameters(), lr=1e-3, weight_decay=1e-4)
+    loss_hard = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=label_smoothing)
+    opt = torch.optim.AdamW(student.parameters(), lr=lr, weight_decay=1e-4)
     loader = DataLoader(DistillSet(), batch_size=batch_size, shuffle=True)
-    temperature = 2.0
+    temperature = distill_temperature
     best_state = None
     best_top1 = -1.0
     stale = 0
@@ -340,18 +341,27 @@ def train_student(teachers, n_classes: int, class_weights: np.ndarray, train_row
             y = y.to(device)
             soft_target = soft_target.to(device)
             opt.zero_grad()
-            logits = student(x)
+            if mixup > 0 and x.size(0) > 1 and float(torch.rand(1)) < 0.5:
+                lam = float(np.random.beta(mixup, mixup))
+                order = torch.randperm(x.size(0), device=device)
+                x = lam * x + (1.0 - lam) * x[order]
+                soft_target = lam * soft_target + (1.0 - lam) * soft_target[order]
+                logits = student(x)
+                hard = lam * loss_hard(logits, y) + (1.0 - lam) * loss_hard(logits, y[order])
+            else:
+                logits = student(x)
+                hard = loss_hard(logits, y)
             soft = nn.functional.kl_div(
                 nn.functional.log_softmax(logits / temperature, dim=1),
                 nn.functional.softmax(soft_target / temperature, dim=1),
                 reduction="batchmean",
             ) * (temperature ** 2)
-            loss = 0.5 * loss_hard(logits, y) + 0.5 * soft
+            loss = 0.5 * hard + 0.5 * soft
             loss.backward()
             opt.step()
         val_logits, val_y = evaluate(student, val_loader, device, tta=False)
         val_top1 = ranked_accuracy(val_logits, val_y, 1)
-        history.append({"studentEpoch": epoch, "valTop1": round(val_top1, 4)})
+        history.append({"seed": seed, "studentEpoch": epoch, "valTop1": round(val_top1, 4), "valTop5": round(ranked_accuracy(val_logits, val_y, 5), 4)})
         print(history[-1], flush=True)
         if val_top1 > best_top1 + 1e-4:
             best_top1 = val_top1
@@ -805,6 +815,113 @@ def hold_out_selection(args, members, history, labels, class_weights, splits, la
     print("Validation selection is saved. The test split was not scored.")
 
 
+def run_distillation(args) -> None:
+    """Train browser-sized students from a saved teacher. Validation only."""
+    teacher_dir = Path(args.distill_from)
+    meta_path = teacher_dir / "selection.json"
+    if not meta_path.exists():
+        raise SystemExit(f"Teacher selection is missing at {meta_path}")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    cache = Path(args.cache)
+    rows = load_index(cache / args.index)
+    labels = sorted({row["label"] for row in rows if row["split"] == "train"})
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    splits = {
+        name: [row for row in rows if row["split"] == name and row["label"] in label_to_index]
+        for name in ("train", "validation", "test")
+    }
+    leakage = leakage_report(rows)
+    if any(leakage.values()):
+        raise SystemExit(f"Refusing to train with signer leakage: {leakage}")
+    feature_dim = int(meta["featureDim"])
+    seq_dir = cache / meta.get("seqSubdir", "seq-rich")
+    device = torch.device("cpu")
+    torch.set_num_threads(os.cpu_count() or 4)
+    teacher_seeds = meta.get("seeds") or [0]
+    teachers = []
+    for seed in teacher_seeds:
+        path = teacher_dir / f"member-{seed}.pt"
+        model = SignTransformer(
+            feature_dim,
+            len(labels),
+            d_model=int(meta["dModel"]),
+            heads=int(meta.get("heads", 4)),
+            layers=int(meta["layers"]),
+            ff=int(meta["ff"]),
+            dropout=0.0,
+            stem=bool(meta.get("stem", False)),
+        )
+        model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
+        model.eval()
+        teachers.append(model)
+    print({"teacherVal": meta.get("valTop1"), "teacherTop5": meta.get("valTop5"), "teachers": len(teachers)}, flush=True)
+    counts = np.bincount([label_to_index[row["label"]] for row in splits["train"]], minlength=len(labels))
+    class_weights = np.sqrt(counts.sum() / np.maximum(counts, 1) / len(labels)).astype(np.float32)
+    val_loader = DataLoader(
+        SequenceDataset(splits["validation"], label_to_index, seq_dir, False, 2, layout=meta["featureLayout"]),
+        batch_size=max(args.batch_size, 256),
+    )
+    artifact = Path(args.artifact_dir)
+    artifact.mkdir(parents=True, exist_ok=True)
+    seeds = [int(part) for part in args.seeds.split(",") if part.strip() != ""]
+    students = []
+    history = []
+    for seed in seeds:
+        final_path = artifact / f"member-{seed}.pt"
+        hist_path = artifact / f"member-{seed}-history.json"
+        if args.resume and final_path.exists() and hist_path.exists():
+            model = SignTransformer(feature_dim, len(labels), d_model=args.hidden, heads=4, layers=args.layers, ff=args.ff, dropout=0.0)
+            model.load_state_dict(torch.load(final_path, map_location=device, weights_only=True))
+            model.eval()
+            students.append(model)
+            history.extend(json.loads(hist_path.read_text(encoding="utf-8")))
+            print({"seed": seed, "resumed": "saved"}, flush=True)
+            continue
+        student, member_history = train_student(
+            teachers,
+            len(labels),
+            class_weights,
+            splits["train"],
+            label_to_index,
+            cache,
+            val_loader,
+            device,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            feature_dim=feature_dim,
+            d_model=args.hidden,
+            layers=args.layers,
+            ff=args.ff,
+            layout=meta["featureLayout"],
+            strength=args.augment,
+            seq_dir=seq_dir,
+            patience=args.patience,
+            seed=seed,
+            label_smoothing=args.label_smoothing,
+            mixup=args.mixup,
+            lr=args.lr,
+        )
+        torch.save(student.state_dict(), final_path)
+        hist_path.write_text(json.dumps(member_history), encoding="utf-8")
+        students.append(student)
+        history.extend(member_history)
+    hold_out_selection(
+        args,
+        students,
+        history,
+        labels,
+        class_weights,
+        splits,
+        label_to_index,
+        cache,
+        seq_dir,
+        val_loader,
+        device,
+        feature_dim,
+        artifact,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache", default="training/cache")
@@ -832,6 +949,7 @@ def main() -> None:
     parser.add_argument("--stem", action="store_true", help="Add a residual depthwise temporal stem (kernels 5 and 3) before attention.")
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--init-dir", default="", help="Load member-{seed}-best.pt from this directory before training.")
+    parser.add_argument("--distill-from", default="", help="Train the browser model from this teacher artifact directory. Does not score test.")
     parser.add_argument("--min-precision", type=float, default=0.72, help="Validation precision floor for the live gate.")
     parser.add_argument("--artifact-dir", default="training/artifacts")
     parser.add_argument("--hold-test", action="store_true", help="Select on validation and do not score the test split.")
@@ -846,6 +964,9 @@ def main() -> None:
     args = parser.parse_args()
     if args.report_test:
         report_test(args)
+        return
+    if args.distill_from:
+        run_distillation(args)
         return
     seeds = [int(part) for part in args.seeds.split(",") if part.strip() != ""]
 
