@@ -3,7 +3,7 @@ import { ASL_ENGLISH_PACK } from './languages/aslEnglish';
 import { LiveInterpreter, type LiveSnapshot } from './recognition/liveInterpreter';
 import { assessFrame } from './recognition/frameQuality';
 import { letterModelFromJson, predictLetter } from './recognition/letterModel';
-import { sequenceFeatures, sequenceFeaturesRich } from './recognition/features';
+import { sequenceFeatures, sequenceFeaturesFine, sequenceFeaturesRich } from './recognition/features';
 import { decodeF32, glossToEnglish, modelFromJson, predictSequence, type Prediction, type SequenceModel } from './recognition/sequenceModel';
 import {
   applyPersonalLabel,
@@ -71,6 +71,7 @@ function App() {
   const [predictedSign, setPredictedSign] = useState('Loading model…');
   const [matchConfidence, setMatchConfidence] = useState(0);
   const [topGuesses, setTopGuesses] = useState<string>('');
+  const [choices, setChoices] = useState<Array<{ label: string; probability: number }>>([]);
   const [frameHint, setFrameHint] = useState('Sign one word, then pause. Keep the whole hand in frame.');
   const [phase, setPhase] = useState<LiveSnapshot['phase']>('idle');
   const [currentPhrase, setCurrentPhrase] = useState<string[]>([]);
@@ -173,7 +174,11 @@ function App() {
           lastSequenceRef.current = sequence;
         }, setPersonalHit), {
           letterPredict: (hand) => letterPredictRef.current?.(hand) ?? null,
-          features: model.featureLayout === 'rich' ? sequenceFeaturesRich : sequenceFeatures,
+          features: model.featureLayout === 'fine'
+            ? sequenceFeaturesFine
+            : model.featureLayout === 'rich'
+              ? sequenceFeaturesRich
+              : sequenceFeatures,
         });
         setModelLabels(model.labels.map(glossToEnglish));
         if (payload.metrics) {
@@ -222,6 +227,7 @@ function App() {
       if (snap.top.length > 0) {
         setTopGuesses(snap.top.map((item) => `${item.label} ${(item.probability * 100).toFixed(0)}%`).join(' · '));
       }
+      setChoices(snap.choices);
     };
     const onFrame = (data: FrameLandmarksData) => {
       setFps(data.fps);
@@ -237,6 +243,7 @@ function App() {
         left: data.leftHand,
         right: data.rightHand,
         pose: data.pose,
+        lips: data.lips ?? null,
       });
       const now = performance.now();
       if (snap.committed || now - uiStampRef.current > 150) {
@@ -416,6 +423,27 @@ function App() {
         </div>
         <p className="now-reading">{predictedSign}</p>
         <p className={frameHint.match(/frame|closer|light|back|Raise/) ? 'frame-hint warn' : 'frame-hint'}>{frameHint}</p>
+        {choices.length > 0 && (
+          <div className="choice-row" role="group" aria-label="Choose the word you signed">
+            {choices.map((choice) => (
+              <button
+                key={choice.label}
+                type="button"
+                className="choice-target"
+                onClick={() => {
+                  assemblerRef.current?.pushSign(choice.label, choice.probability);
+                  interpreterRef.current?.dismissChoices();
+                  setChoices([]);
+                  setPredictedSign(choice.label);
+                  setMatchConfidence(choice.probability * 100);
+                  setJustAdded(choice.label);
+                }}
+              >
+                {choice.label}
+              </button>
+            ))}
+          </div>
+        )}
         {topGuesses && <p className="top-guesses">Other guesses: {topGuesses}</p>}
         <div className="caption-actions">
           <button type="button" onClick={() => assemblerRef.current?.undo()} disabled={words.length + spelling.length === 0}>Undo</button>

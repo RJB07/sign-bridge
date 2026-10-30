@@ -26,6 +26,8 @@ export type LiveSnapshot = {
   phase: 'idle' | 'signing' | 'fingerspelling';
   committed: Commit | null;
   top: Array<{ label: string; probability: number }>;
+  /** Large tap targets shown when the gate will not commit on its own. */
+  choices: Array<{ label: string; probability: number }>;
 };
 
 export type InterpreterOptions = {
@@ -102,6 +104,7 @@ export class LiveInterpreter {
   private waitForStill = false;
   private lastPreviewAt = -Infinity;
   private lastPreview: { label: string; confidence: number; top: LiveSnapshot['top'] } | null = null;
+  private choices: LiveSnapshot['choices'] = [];
 
   constructor(
     private readonly classifier: GlossClassifier,
@@ -127,6 +130,7 @@ export class LiveInterpreter {
     this.waitForStill = false;
     this.lastPreviewAt = -Infinity;
     this.lastPreview = null;
+    this.choices = [];
   }
 
   push(frame: RawFrame): LiveSnapshot {
@@ -142,6 +146,7 @@ export class LiveInterpreter {
       if (this.segmentStart === null) {
         this.segmentStart = Math.max(0, this.frames.length - 2);
         this.committedThisSegment = false;
+        this.choices = [];
       }
       this.lowMotion = 0;
       this.pendingLetter = null;
@@ -159,6 +164,10 @@ export class LiveInterpreter {
         if (capped && present && speed >= this.options.stopSpeed) this.waitForStill = true;
         if (!this.committedThisSegment && segmentLength >= this.options.minFrames) {
           committed = this.commitGloss(this.segmentStart, this.frames.length - this.lowMotion, this.classifier.emitThreshold);
+          if (!committed) {
+            const ranked = this.rank(this.segmentStart, this.frames.length - this.lowMotion);
+            this.choices = ranked ? ranked.top.slice(0, 3) : [];
+          }
         }
         this.segmentStart = null;
         this.lowMotion = 0;
@@ -224,7 +233,12 @@ export class LiveInterpreter {
       if (this.segmentStart !== null) this.segmentStart = Math.max(0, this.segmentStart - drop);
     }
 
-    return { candidate, confidence, phase, committed, top };
+    return { candidate, confidence, phase, committed, top, choices: this.choices };
+  }
+
+  /** The signer picked one of the offered words. */
+  dismissChoices(): void {
+    this.choices = [];
   }
 
   /** Classify a prepared feature sequence. Used by the held-out replay control. */
@@ -276,6 +290,7 @@ export class LiveInterpreter {
     const classMin = this.classifier.classThresholds?.[classIndex] ?? this.classifier.emitThreshold;
     if (prediction.confidence < Math.max(threshold, classMin) || prediction.margin < this.classifier.marginThreshold) return null;
     this.committedThisSegment = true;
+    this.choices = [];
     const endFrame = this.frames[Math.min(this.frames.length - 1, Math.max(0, end - 1))];
     this.suppressLettersUntil = (endFrame?.timeMs ?? 0) + this.options.letterCooldownMs;
     return { text: glossToEnglish(prediction.label), kind: 'gloss', confidence: prediction.confidence };

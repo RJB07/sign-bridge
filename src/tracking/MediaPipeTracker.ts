@@ -5,6 +5,7 @@ import {
   type NormalizedLandmark,
 } from '@mediapipe/tasks-vision';
 import { publicUrl } from '../publicUrl';
+import { LIP_INDEXES } from '../recognition/features';
 import type { FrameLandmarksData, Point3D, TrackingStatus } from '../types/signbridge';
 
 const HOLISTIC_MODEL = publicUrl('/models/holistic_landmarker.task');
@@ -21,6 +22,13 @@ const HAND_CONNECTIONS: Array<[number, number]> = [
 const POSE_CONNECTIONS: Array<[number, number]> = [
   [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24],
 ];
+
+function lipPoints(list: NormalizedLandmark[] | undefined): Point3D[] | null {
+  if (!list || list.length <= Math.max(...LIP_INDEXES)) return null;
+  const points = LIP_INDEXES.map((index) => list[index]);
+  if (points.some((point) => !point || !Number.isFinite(point.x) || !Number.isFinite(point.y))) return null;
+  return points.map((point) => ({ x: point.x, y: point.y, z: point.z ?? 0 }));
+}
 
 function toPoints(list: NormalizedLandmark[] | undefined, expected: number): Point3D[] | null {
   if (!list || list.length < expected) return null;
@@ -118,6 +126,7 @@ export class MediaPipeTracker {
     const leftHand = toPoints(result.leftHandLandmarks?.[0], 21);
     const rightHand = toPoints(result.rightHandLandmarks?.[0], 21);
     const pose = toPoints(result.poseLandmarks?.[0], 33);
+    const lips = lipPoints(result.faceLandmarks?.[0]);
     const handsCount = Number(Boolean(leftHand)) + Number(Boolean(rightHand));
     this.frameCount += 1;
     if (now - this.lastFpsTime >= 1000) {
@@ -139,6 +148,7 @@ export class MediaPipeTracker {
       leftHand,
       rightHand,
       pose,
+      lips,
       faceDetected: Boolean(result.faceLandmarks?.[0]?.length),
       handsCount,
       timestamp: now,

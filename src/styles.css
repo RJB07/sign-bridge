@@ -877,6 +877,29 @@ html,
   font-size: 1.25rem;
   font-weight: 700;
 }
+.choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+.choice-target {
+  flex: 1 1 9rem;
+  min-height: 4.75rem;
+  padding: 0.6rem 1rem;
+  border: 3px solid #ffe600;
+  border-radius: 16px;
+  background: #ffe600;
+  color: #111;
+  font: inherit;
+  font-size: max(1.6rem, calc(var(--caption-size) * 0.5));
+  font-weight: 800;
+  cursor: pointer;
+}
+.choice-target:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
 .caption-actions {
   margin-top: 14px;
 }

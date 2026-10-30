@@ -58,6 +58,26 @@ describe('live interpreter', () => {
     expect(texts).not.toContain('apple');
   });
 
+  it('offers the top three words when the gate will not commit', () => {
+    const interpreter = new LiveInterpreter(
+      {
+        labels: ['pen', 'pencil', 'book'],
+        emitThreshold: 0.8,
+        marginThreshold: 0.2,
+        predict: () => ({ label: 'pen', confidence: 0.4, margin: 0.05, probabilities: [0.4, 0.35, 0.25] }),
+      },
+      { startSpeed: 0.01, stopSpeed: 0.004, minFrames: 3, earlyIntervalMs: 10_000, earlyBoost: 0, stopFrames: 2 },
+    );
+    let choices: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      const snap = interpreter.push(frame(i * 40, i < 4 ? i * 0.05 : 0.2));
+      if (snap.choices.length > 0) choices = snap.choices.map((choice) => choice.label);
+    }
+    expect(choices).toEqual(['pen', 'pencil', 'book']);
+    interpreter.dismissChoices();
+    expect(interpreter.push(frame(400, 0.2)).choices).toEqual([]);
+  });
+
   it('previews with the fast classifier and commits with the full one', () => {
     let preview = 0;
     const interpreter = new LiveInterpreter(

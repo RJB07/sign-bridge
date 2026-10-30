@@ -15,6 +15,15 @@ FEATURE_DIM = 273
 # 147:210 dominant shape vs wrist, 210:273 velocity of dominant vs nose,
 # 273:294 velocity of pose vs nose. The browser port must match.
 RICH_FEATURE_DIM = 294
+# Rich vector, then wrist and five fingertips relative to lips, both eyes, and
+# both cheek proxies (90), then five fingertip-to-palm cosines. The cheek
+# proxy is the midpoint of the outer eye and the mouth corner in the pose.
+FINE_OFFSET_DIM = 90
+FINE_CURL_DIM = 5
+FINE_XYZ = RICH_FEATURE_DIM + FINE_OFFSET_DIM
+FINE_FEATURE_DIM = FINE_XYZ + FINE_CURL_DIM
+FINE_HAND_INDEXES = (0, 4, 8, 12, 16, 20)
+FINE_CURLS = ((1, 2, 4), (5, 6, 8), (9, 10, 12), (13, 14, 16), (17, 18, 20))
 SEQ_LEN = 32
 POSE_INDEXES = (0, 11, 12, 13, 14, 15, 16)
 # Outer mouth, lips, and chin. Stored on the raw cache for ablations. The live
@@ -159,6 +168,85 @@ def sequence_features_rich(frames: list[dict], forced: str | None = None) -> np.
     return np.stack(rows).astype(np.float32)
 
 
+def _unit_dot(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    toward = b - a
+    away = c - b
+    left = float(np.linalg.norm(toward))
+    right = float(np.linalg.norm(away))
+    if left < 1e-6 or right < 1e-6:
+        return 0.0
+    return float(np.dot(toward, away) / (left * right))
+
+
+def _face_targets(pose: np.ndarray | None, lips: np.ndarray | None, origin: np.ndarray, scale: float, mirror: bool) -> list[np.ndarray | None]:
+    def placed(point: np.ndarray | None) -> np.ndarray | None:
+        if point is None or not np.isfinite(point).all():
+            return None
+        rel = (point.astype(np.float32) - origin) / scale
+        if mirror:
+            rel = rel.copy()
+            rel[0] *= -1
+        return rel.astype(np.float32)
+
+    lip_point = None
+    if lips is not None and np.isfinite(lips).all():
+        lip_point = lips.mean(axis=0)
+    elif pose is not None:
+        lip_point = (pose[9] + pose[10]) / 2
+    eyes_cheeks: list[np.ndarray | None] = [lip_point]
+    if pose is None:
+        eyes_cheeks.extend([None, None, None, None])
+    else:
+        eyes_cheeks.append(pose[2])
+        eyes_cheeks.append(pose[5])
+        eyes_cheeks.append((pose[3] + pose[9]) / 2)
+        eyes_cheeks.append((pose[6] + pose[10]) / 2)
+    return [placed(point) for point in eyes_cheeks]
+
+
+def sequence_features_fine(frames: list[dict], forced: str | None = None) -> np.ndarray:
+    """Rich features plus hand-to-face offsets and fingertip curl.
+
+    Offsets are the dominant wrist and five fingertips minus the lip center,
+    each eye, and each cheek proxy. Curl is the cosine at each finger joint.
+    Shape is (T, 389). The first 294 values match `sequence_features_rich`.
+    """
+    rich = sequence_features_rich(frames, forced)
+    if rich.shape[0] == 0:
+        return np.zeros((0, FINE_FEATURE_DIM), dtype=np.float32)
+    dominant = choose_dominant(frames, forced)
+    mirror = dominant == "Left"
+    dom_key = "left" if dominant == "Left" else "right"
+    extras = []
+    for fr in frames:
+        hand = _as_points(fr.get(dom_key), 21)
+        pose = _as_points(fr.get("pose"), 33)
+        lips = _as_points(fr.get("lips"), len(LIP_INDEXES))
+        origin, scale = _face_origin_and_scale(hand, pose)
+        targets = _face_targets(pose, lips, origin, scale, mirror)
+        offsets = []
+        if hand is None:
+            offsets.append(np.zeros(FINE_OFFSET_DIM, dtype=np.float32))
+            curls = np.zeros(FINE_CURL_DIM, dtype=np.float32)
+        else:
+            placed_hand = []
+            for index in FINE_HAND_INDEXES:
+                rel = (hand[index] - origin) / scale
+                if mirror:
+                    rel = rel.copy()
+                    rel[0] *= -1
+                placed_hand.append(rel.astype(np.float32))
+            for point in placed_hand:
+                for target in targets:
+                    if target is None:
+                        offsets.append(np.zeros(3, dtype=np.float32))
+                    else:
+                        offsets.append((point - target).astype(np.float32))
+            curls = np.array([_unit_dot(hand[a], hand[b], hand[c]) for a, b, c in FINE_CURLS], dtype=np.float32)
+        extras.append(np.concatenate([*offsets, curls]).astype(np.float32))
+    return np.concatenate([rich, np.stack(extras)], axis=1).astype(np.float32)
+
+
 def frames_from_raw(raw: np.ndarray) -> list[dict]:
     """Inverse of the cache pack: left, right, pose, then the lip subset."""
     array = np.asarray(raw, dtype=np.float32)
@@ -228,27 +316,39 @@ def resample_sequence(seq: np.ndarray, length: int = SEQ_LEN) -> np.ndarray:
     return out
 
 
-def mirror_sequence(seq: np.ndarray) -> np.ndarray:
-    """Flip the horizontal axis of an already-normalized feature sequence."""
+def mirror_sequence(seq: np.ndarray, xyz_dims: int | None = None) -> np.ndarray:
+    """Flip the horizontal axis of an already-normalized feature sequence.
+
+    `xyz_dims` limits the flip to a coordinate prefix. Scalar tail channels,
+    such as fingertip curl, stay put.
+    """
     out = np.array(seq, dtype=np.float32, copy=True)
-    out[..., 0::3] *= -1
+    width = out.shape[-1] if xyz_dims is None else min(xyz_dims, out.shape[-1])
+    out[..., 0:width:3] *= -1
     return out
 
 
-def _rotate_scale(seq: np.ndarray, angle: float, scale: float) -> np.ndarray:
+def _rotate_scale(seq: np.ndarray, angle: float, scale: float, xyz_dims: int | None = None) -> np.ndarray:
+    width = seq.shape[-1] if xyz_dims is None else xyz_dims
     cosine, sine = np.cos(angle), np.sin(angle)
-    flat = seq.reshape(seq.shape[0], -1, 3)
+    head = np.array(seq[:, :width], dtype=np.float32, copy=True)
+    flat = head.reshape(seq.shape[0], -1, 3)
     x = flat[:, :, 0].copy()
     y = flat[:, :, 1].copy()
     flat[:, :, 0] = cosine * x - sine * y
     flat[:, :, 1] = sine * x + cosine * y
-    return (flat.reshape(seq.shape[0], -1) * scale).astype(np.float32)
+    head = (flat.reshape(seq.shape[0], -1) * scale).astype(np.float32)
+    if width == seq.shape[-1]:
+        return head
+    return np.concatenate([head, seq[:, width:]], axis=1).astype(np.float32)
 
 
 def _shift_positions(seq: np.ndarray, position_dims: int, shift: np.ndarray) -> np.ndarray:
-    flat = seq.reshape(seq.shape[0], -1, 3)
-    flat[:, : position_dims // 3, :] += shift
-    return flat.reshape(seq.shape[0], -1).astype(np.float32)
+    out = np.array(seq, dtype=np.float32, copy=True)
+    flat = out[:, :position_dims].reshape(seq.shape[0], -1, 3)
+    flat += shift
+    out[:, :position_dims] = flat.reshape(seq.shape[0], position_dims)
+    return out
 
 
 def _augment_rich(seq: np.ndarray, rng: np.random.Generator, layout: str) -> np.ndarray:
@@ -257,8 +357,16 @@ def _augment_rich(seq: np.ndarray, rng: np.random.Generator, layout: str) -> np.
     `layout="rich"` is the 294-d face-relative vector. `layout="legacy"` is the
     273-d vector. Position channels are shifted; velocity channels are not.
     """
-    expected = RICH_FEATURE_DIM if layout == "rich" else FEATURE_DIM
-    if layout not in {"rich", "legacy"}:
+    if layout == "fine":
+        expected = FINE_FEATURE_DIM
+        xyz_dims = FINE_XYZ
+    elif layout == "rich":
+        expected = RICH_FEATURE_DIM
+        xyz_dims = None
+    elif layout == "legacy":
+        expected = FEATURE_DIM
+        xyz_dims = None
+    else:
         raise ValueError(f"unknown feature layout {layout}")
     seq = np.array(seq, dtype=np.float32, copy=True)
     if seq.shape[1] != expected:
@@ -279,8 +387,8 @@ def _augment_rich(seq: np.ndarray, rng: np.random.Generator, layout: str) -> np.
             drop_at = rng.choice(seq.shape[0], size=n_drop, replace=False)
             seq = np.delete(seq, drop_at, axis=0)
     if rng.random() < 0.5:
-        seq = mirror_sequence(seq)
-    seq = _rotate_scale(seq, float(rng.uniform(-0.55, 0.55)), float(rng.uniform(0.65, 1.4)))
+        seq = mirror_sequence(seq, xyz_dims)
+    seq = _rotate_scale(seq, float(rng.uniform(-0.55, 0.55)), float(rng.uniform(0.65, 1.4)), xyz_dims)
     if rng.random() < 0.8:
         shift = rng.uniform(-0.12, 0.12, size=(1, 1, 3)).astype(np.float32)
         position_dims = 210 if layout == "rich" else 147
@@ -311,8 +419,8 @@ def augment_sequence(seq: np.ndarray, rng: np.random.Generator, strength: str = 
     are short, so a crop never goes below four frames. Mirror stands in for a
     left-hand signer.
     """
-    if strength == "rich":
-        return _augment_rich(seq, rng, layout)
+    if layout == "fine" or strength == "rich":
+        return _augment_rich(seq, rng, "fine" if layout == "fine" else layout)
     seq = np.array(seq, dtype=np.float32, copy=True)
     strong = strength == "strong"
     if seq.shape[0] > 4 and rng.random() < (0.85 if strong else 0.75):

@@ -17,6 +17,8 @@ export type FrameLandmarksData = {
   leftHand: Point3D[] | null;
   rightHand: Point3D[] | null;
   pose: Point3D[] | null;
+  /** Lip landmarks in MediaPipe face-mesh order used by the fine feature layout. */
+  lips?: Point3D[] | null;
   faceDetected: boolean;
   handsCount: number;
   timestamp: number;

@@ -7,6 +7,12 @@
 export const FEATURE_DIM = 273;
 /** Face-relative hands and pose, wrist-centered shape, and velocities. Keep aligned with training/features.py. */
 export const RICH_FEATURE_DIM = 294;
+/** Rich features, hand-to-face offsets, and five fingertip curls. Keep aligned with training/features.py. */
+export const FINE_FEATURE_DIM = 389;
+export const FINE_XYZ = 384;
+export const LIP_INDEXES = [13, 14, 17, 61, 78, 81, 84, 87, 91, 146, 291, 308];
+const FINE_HAND_INDEXES = [0, 4, 8, 12, 16, 20];
+const FINE_CURLS: Array<[number, number, number]> = [[1, 2, 4], [5, 6, 8], [9, 10, 12], [13, 14, 16], [17, 18, 20]];
 export const SEQ_LEN = 32;
 export const POSE_INDEXES = [0, 11, 12, 13, 14, 15, 16];
 
@@ -16,6 +22,7 @@ export type FeatureFrame = {
   left: Landmark[] | null;
   right: Landmark[] | null;
   pose: Landmark[] | null;
+  lips?: Landmark[] | null;
 };
 
 export type HandSide = 'Left' | 'Right';
@@ -166,8 +173,89 @@ export function sequenceFeaturesRich(frames: FeatureFrame[], forced?: HandSide |
   return rows;
 }
 
-export function mirrorSequence(sequence: number[][]): number[][] {
-  return sequence.map((row) => row.map((value, index) => (index % 3 === 0 ? -value : value)));
+function unitDot(a: Landmark, b: Landmark, c: Landmark): number {
+  const toward = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+  const away = { x: c.x - b.x, y: c.y - b.y, z: c.z - b.z };
+  const left = Math.hypot(toward.x, toward.y, toward.z);
+  const right = Math.hypot(away.x, away.y, away.z);
+  if (left < 1e-6 || right < 1e-6) return 0;
+  return (toward.x * away.x + toward.y * away.y + toward.z * away.z) / (left * right);
+}
+
+function placePoint(point: Landmark, origin: Landmark, scale: number, mirror: boolean): Landmark {
+  return {
+    x: ((point.x - origin.x) / scale) * (mirror ? -1 : 1),
+    y: (point.y - origin.y) / scale,
+    z: (point.z - origin.z) / scale,
+  };
+}
+
+export function sequenceFeaturesFine(frames: FeatureFrame[], forced?: HandSide | null): number[][] {
+  const rich = sequenceFeaturesRich(frames, forced);
+  if (rich.length === 0) return [];
+  const dominant = chooseDominant(frames, forced);
+  if (!dominant) return [];
+  const mirror = dominant === 'Left';
+  const domKey = dominant === 'Left' ? 'left' : 'right';
+  return frames.map((frame, time) => {
+    const hand = asPoints(frame[domKey], 21);
+    const pose = asPoints(frame.pose, 33);
+    const lips = asPoints(frame.lips ?? null, LIP_INDEXES.length);
+    const { origin, scale } = faceOriginAndScale(hand, pose);
+    const targets: Array<Landmark | null> = [];
+    if (lips) {
+      const mean = { x: 0, y: 0, z: 0 };
+      for (const point of lips) {
+        mean.x += point.x;
+        mean.y += point.y;
+        mean.z += point.z;
+      }
+      mean.x /= lips.length;
+      mean.y /= lips.length;
+      mean.z /= lips.length;
+      targets.push(placePoint(mean, origin, scale, mirror));
+    } else if (pose) {
+      targets.push(placePoint({
+        x: (pose[9].x + pose[10].x) / 2,
+        y: (pose[9].y + pose[10].y) / 2,
+        z: (pose[9].z + pose[10].z) / 2,
+      }, origin, scale, mirror));
+    } else targets.push(null);
+    if (!pose) targets.push(null, null, null, null);
+    else {
+      targets.push(placePoint(pose[2], origin, scale, mirror));
+      targets.push(placePoint(pose[5], origin, scale, mirror));
+      targets.push(placePoint({
+        x: (pose[3].x + pose[9].x) / 2,
+        y: (pose[3].y + pose[9].y) / 2,
+        z: (pose[3].z + pose[9].z) / 2,
+      }, origin, scale, mirror));
+      targets.push(placePoint({
+        x: (pose[6].x + pose[10].x) / 2,
+        y: (pose[6].y + pose[10].y) / 2,
+        z: (pose[6].z + pose[10].z) / 2,
+      }, origin, scale, mirror));
+    }
+    const offsets: number[] = [];
+    if (!hand) {
+      for (let i = 0; i < 90; i += 1) offsets.push(0);
+    } else {
+      for (const index of FINE_HAND_INDEXES) {
+        const point = placePoint(hand[index], origin, scale, mirror);
+        for (const target of targets) {
+          if (!target) offsets.push(0, 0, 0);
+          else offsets.push(point.x - target.x, point.y - target.y, point.z - target.z);
+        }
+      }
+    }
+    const curls = hand ? FINE_CURLS.map(([a, b, c]) => unitDot(hand[a], hand[b], hand[c])) : [0, 0, 0, 0, 0];
+    return [...rich[time], ...offsets, ...curls];
+  });
+}
+
+export function mirrorSequence(sequence: number[][], xyzDims?: number): number[][] {
+  const width = xyzDims ?? (sequence[0]?.length === FINE_FEATURE_DIM ? FINE_XYZ : sequence[0]?.length ?? 0);
+  return sequence.map((row) => row.map((value, index) => (index < width && index % 3 === 0 ? -value : value)));
 }
 
 export function resampleSequence(seq: number[][], length = SEQ_LEN): number[][] {

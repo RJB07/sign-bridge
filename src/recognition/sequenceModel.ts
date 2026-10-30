@@ -25,8 +25,8 @@ export type SequenceModel = {
   layers: number;
   classThresholds: number[];
   tta: boolean;
-  /** `rich` is nose-relative hands, shape, and velocity. Absent means the 273-d vector. */
-  featureLayout: 'legacy' | 'rich';
+  /** `rich` is nose-relative hands. `fine` adds face offsets and finger curl. */
+  featureLayout: 'legacy' | 'rich' | 'fine';
   /** Softmax temperature. 1 leaves confidence unchanged. Values above 1 reduce overconfidence. */
   temperature: number;
   members: WeightBlob[];
@@ -45,7 +45,7 @@ type ModelFile = {
   classThresholds?: number[];
   tta?: boolean;
   dtype?: 'f16' | 'f32';
-  featureLayout?: 'legacy' | 'rich';
+  featureLayout?: 'legacy' | 'rich' | 'fine';
   temperature?: number;
   members: WeightBlob[];
 };
@@ -245,6 +245,18 @@ export function logitsForMember(sequence: number[][], blob: WeightBlob, dModel: 
   const projB = tensor(blob, 'proj.bias');
   const pos = tensor(blob, 'pos');
   let h = linear(flat, time, feat, proj.data, projB.data);
+  if (blob.weights['shape.fc1.weight']) {
+    const shape = new Float32Array(time * 63);
+    for (let t = 0; t < time; t++) {
+      for (let d = 0; d < 63; d++) shape[t * 63 + d] = flat[t * feat + 147 + d];
+    }
+    const fc1 = tensor(blob, 'shape.fc1.weight');
+    let hidden = linear(shape, time, 63, fc1.data, tensor(blob, 'shape.fc1.bias').data);
+    for (let i = 0; i < hidden.length; i++) if (hidden[i] < 0) hidden[i] = 0;
+    const fc2 = tensor(blob, 'shape.fc2.weight');
+    const embedded = linear(hidden, time, 32, fc2.data, tensor(blob, 'shape.fc2.bias').data);
+    for (let i = 0; i < h.length; i++) h[i] += embedded[i];
+  }
   if (blob.weights['dw1.weight']) {
     const dw1 = tensor(blob, 'dw1.weight');
     let y = conv1dDepthwise(h, time, dModel, dw1.data, tensor(blob, 'dw1.bias').data, dw1.shape[2]);
@@ -318,7 +330,7 @@ export function modelFromJson(payload: ModelFile): SequenceModel {
     marginThreshold: payload.marginThreshold,
     classThresholds: payload.classThresholds ?? payload.labels.map(() => payload.emitThreshold),
     tta: Boolean(payload.tta),
-    featureLayout: payload.featureLayout === 'rich' ? 'rich' : 'legacy',
+    featureLayout: payload.featureLayout === 'fine' ? 'fine' : payload.featureLayout === 'rich' ? 'rich' : 'legacy',
     temperature: typeof payload.temperature === 'number' && payload.temperature > 0 ? payload.temperature : 1,
     featureDim: payload.featureDim,
     seqLen: payload.seqLen,
@@ -346,7 +358,7 @@ export function logitsForSequence(model: SequenceModel, sequence: number[][]): F
 export function predictSequence(model: SequenceModel, sequence: number[][], options: PredictOptions = {}): Prediction {
   const prepared = sequence.length === model.seqLen ? sequence : resampleSequence(sequence, model.seqLen);
   const useTta = options.tta ?? model.tta;
-  const views = useTta ? [prepared, mirrorSequence(prepared)] : [prepared];
+  const views = useTta ? [prepared, mirrorSequence(prepared, model.featureLayout === 'fine' ? 384 : undefined)] : [prepared];
   const memberCount = Math.max(1, Math.min(options.members ?? model.members.length, model.members.length));
   const members = model.members.slice(0, memberCount);
   const acc = new Float32Array(model.labels.length);

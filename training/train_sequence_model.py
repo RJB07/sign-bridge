@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
-from features import FEATURE_DIM, RICH_FEATURE_DIM, SEQ_LEN, augment_sequence, mirror_sequence, resample_sequence
+from features import FEATURE_DIM, FINE_FEATURE_DIM, FINE_XYZ, RICH_FEATURE_DIM, SEQ_LEN, augment_sequence, mirror_sequence, resample_sequence
 from sign_transformer import SignTransformer, export_state, forward_logits
 from splits import leakage_report
 
@@ -47,6 +47,7 @@ def round_float16(model: SignTransformer) -> SignTransformer:
         dropout=0.0,
         seq_len=int(model.pos.shape[1]),
         stem=model.stem,
+        shape_embed=model.shape_embed,
     )
     state = {key: value.detach().cpu().to(torch.float16).to(torch.float32) for key, value in model.state_dict().items()}
     rounded.load_state_dict(state)
@@ -161,12 +162,12 @@ def _publish_best(seed: int, best_state, history: list) -> None:
     (tracked / f"member-{seed}-history.json").write_text(json.dumps(history), encoding="utf-8")
 
 
-def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int, d_model: int = 128, layers: int = 2, ff: int = 320, dropout: float = 0.1, label_smoothing: float = 0.05, mixup: float = 0.0, strength: str = "base", patience: int = 10, checkpoint_dir: Path | None = None, resume: bool = False, preload: bool = True, feature_dim: int = FEATURE_DIM, layout: str = "legacy", seq_dir: Path | None = None, lr: float = 1e-3, warmup_epochs: int = 2, lr_min: float = 0.0, stem: bool = False, weight_decay: float = 1e-4, init_path: Path | None = None):
+def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_rows, label_to_index, cache: Path, val_loader, device, epochs: int, batch_size: int, d_model: int = 128, layers: int = 2, ff: int = 320, dropout: float = 0.1, label_smoothing: float = 0.05, mixup: float = 0.0, strength: str = "base", patience: int = 10, checkpoint_dir: Path | None = None, resume: bool = False, preload: bool = True, feature_dim: int = FEATURE_DIM, layout: str = "legacy", seq_dir: Path | None = None,     lr: float = 1e-3, warmup_epochs: int = 2, lr_min: float = 0.0, stem: bool = False, weight_decay: float = 1e-4, init_path: Path | None = None, shape_embed: bool = False):
     torch.manual_seed(seed)
     np.random.seed(seed)
     if d_model % 4 != 0:
         raise ValueError(f"d_model {d_model} must be divisible by 4 heads")
-    model = SignTransformer(feature_dim, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=dropout, stem=stem).to(device)
+    model = SignTransformer(feature_dim, n_classes, d_model=d_model, heads=4, layers=layers, ff=ff, dropout=dropout, stem=stem, shape_embed=shape_embed).to(device)
     if init_path is not None:
         model.load_state_dict(torch.load(init_path, map_location=device, weights_only=True))
     loss_fn = nn.CrossEntropyLoss(weight=torch.from_numpy(class_weights), label_smoothing=label_smoothing)
@@ -285,7 +286,10 @@ def train_member(seed: int, n_classes: int, class_weights: np.ndarray, train_row
 
 def mirror_batch(batch: torch.Tensor) -> torch.Tensor:
     flipped = batch.clone()
-    flipped[..., 0::3] *= -1
+    width = flipped.shape[-1]
+    if width == FINE_FEATURE_DIM:
+        width = FINE_XYZ
+    flipped[..., 0:width:3] *= -1
     return flipped
 
 
@@ -553,6 +557,8 @@ PREVIOUS_TEST_TOP1 = 0.5388
 
 
 def _layout_dim(layout: str) -> int:
+    if layout == "fine":
+        return FINE_FEATURE_DIM
     if layout == "rich":
         return RICH_FEATURE_DIM
     if layout == "legacy":
@@ -781,6 +787,7 @@ def hold_out_selection(args, members, history, labels, class_weights, splits, la
         "ff": chosen["models"][0].ff,
         "heads": chosen["models"][0].heads,
         "stem": bool(getattr(chosen["models"][0], "stem", False)),
+        "shapeEmbed": bool(getattr(chosen["models"][0], "shape_embed", False)),
         "useTta": chosen["use_tta"],
         "dtype": chosen["dtype"],
         "shipStudent": ship_student,
@@ -952,12 +959,13 @@ def main() -> None:
     parser.add_argument("--skip-student", action="store_true")
     parser.add_argument("--resume", action="store_true", help="Continue finished seeds and in-progress epoch checkpoints under training/artifacts.")
     parser.add_argument("--no-preload", action="store_true", help="Read sequences from disk each step. Use this when the training cache does not fit in memory.")
-    parser.add_argument("--feature-layout", choices=("legacy", "rich"), default="legacy")
+    parser.add_argument("--feature-layout", choices=("legacy", "rich", "fine"), default="legacy")
     parser.add_argument("--seq-subdir", default="", help="Sequence folder under the cache. Defaults to seq-rich or seq.")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--lr-min", type=float, default=0.0)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--stem", action="store_true", help="Add a residual depthwise temporal stem (kernels 5 and 3) before attention.")
+    parser.add_argument("--shape-embed", action="store_true", help="Add a hand-shape bottleneck on the wrist-centered 63 coordinates.")
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--init-dir", default="", help="Load member-{seed}-best.pt from this directory before training.")
     parser.add_argument("--distill-from", default="", help="Train the browser model from this teacher artifact directory. Does not score test.")
@@ -1001,7 +1009,8 @@ def main() -> None:
     device = torch.device("cpu")
     torch.set_num_threads(os.cpu_count() or 4)
     feature_dim = _layout_dim(args.feature_layout)
-    seq_dir = cache / (args.seq_subdir or ("seq-rich" if args.feature_layout == "rich" else "seq"))
+    default_seq = {"fine": "seq-fine", "rich": "seq-rich"}.get(args.feature_layout, "seq")
+    seq_dir = cache / (args.seq_subdir or default_seq)
     counts = np.bincount([label_to_index[row["label"]] for row in splits["train"]], minlength=len(labels))
     class_weights = np.sqrt(counts.sum() / np.maximum(counts, 1) / len(labels)).astype(np.float32)
     if args.boost > 1 and args.boost_labels:
@@ -1028,7 +1037,7 @@ def main() -> None:
         final_path = artifact / f"member-{seed}.pt"
         hist_path = artifact / f"member-{seed}-history.json"
         if args.resume and final_path.exists() and hist_path.exists():
-            model = SignTransformer(feature_dim, len(labels), d_model=args.hidden, heads=4, layers=args.layers, ff=args.ff, dropout=0.0, stem=args.stem).to(device)
+            model = SignTransformer(feature_dim, len(labels), d_model=args.hidden, heads=4, layers=args.layers, ff=args.ff, dropout=0.0, stem=args.stem, shape_embed=args.shape_embed).to(device)
             model.load_state_dict(torch.load(final_path, map_location=device, weights_only=True))
             model.eval()
             member_history = json.loads(hist_path.read_text(encoding="utf-8"))
@@ -1065,6 +1074,7 @@ def main() -> None:
             warmup_epochs=args.warmup,
             lr_min=args.lr_min,
             stem=args.stem,
+            shape_embed=args.shape_embed,
             weight_decay=args.weight_decay,
             init_path=_init_checkpoint(args.init_dir, seed),
         )
@@ -1439,7 +1449,7 @@ def report_test(args) -> None:
     )
 
     def load_model(path: Path, d_model: int, layers: int, ff: int) -> SignTransformer:
-        model = SignTransformer(feature_dim, len(labels), d_model=d_model, heads=int(selection["heads"]), layers=layers, ff=ff, dropout=0.0, stem=bool(selection.get("stem", False)))
+        model = SignTransformer(feature_dim, len(labels), d_model=d_model, heads=int(selection["heads"]), layers=layers, ff=ff, dropout=0.0, stem=bool(selection.get("stem", False)), shape_embed=bool(selection.get("shapeEmbed", False)))
         model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
         model.eval()
         return model

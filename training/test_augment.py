@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from features import FEATURE_DIM, RICH_FEATURE_DIM, augment_sequence, mirror_sequence
+from features import FEATURE_DIM, FINE_FEATURE_DIM, RICH_FEATURE_DIM, augment_sequence, mirror_sequence
 
 
 class AugmentTests(unittest.TestCase):
@@ -46,6 +46,15 @@ class AugmentTests(unittest.TestCase):
                 self.assertEqual(out.shape[1], width)
                 self.assertGreaterEqual(out.shape[0], 3)
                 self.assertTrue(np.isfinite(out).all())
+
+    def test_fine_augment_keeps_the_scalar_tail(self):
+        rng = np.random.default_rng(5)
+        seq = rng.normal(size=(14, FINE_FEATURE_DIM)).astype(np.float32)
+        seq[:, -5:] = 0.5
+        out = augment_sequence(seq, rng, strength="strong", layout="fine")
+        self.assertEqual(out.shape[1], FINE_FEATURE_DIM)
+        self.assertGreaterEqual(out.shape[0], 3)
+        self.assertTrue(np.isfinite(out).all())
 
 
 if __name__ == "__main__":

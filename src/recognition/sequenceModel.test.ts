@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import shapeSmoke from './transformer-shape-smoke.json';
 import smoke from './transformer-smoke.json';
 import stemSmoke from './transformer-stem-smoke.json';
 import { decodeF16, decodeF32, float16BitsToFloat32, logitsForSequence, modelFromJson, predictSequence } from './sequenceModel';
@@ -50,6 +51,20 @@ describe('landmark transformer', () => {
     for (let i = 0; i < expected.length; i++) max = Math.max(max, Math.abs(actual[i] - expected[i]));
     expect(max).toBeLessThan(1e-4);
     expect(model.members[0].weights['dw1.weight']).toBeTruthy();
+  });
+
+  it('matches PyTorch when a hand-shape embedding is present', () => {
+    const model = modelFromJson(shapeSmoke);
+    const flat = decodeF32(shapeSmoke.input);
+    const sequence: number[][] = [];
+    for (let t = 0; t < model.seqLen; t++) {
+      sequence.push(Array.from(flat.slice(t * model.featureDim, (t + 1) * model.featureDim)));
+    }
+    const actual = logitsForSequence(model, sequence);
+    const expected = decodeF32(shapeSmoke.logits);
+    let max = 0;
+    for (let i = 0; i < expected.length; i++) max = Math.max(max, Math.abs(actual[i] - expected[i]));
+    expect(max).toBeLessThan(1e-4);
   });
 
   it('temperature leaves the label and softens confidence', () => {

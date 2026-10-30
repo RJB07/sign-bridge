@@ -28,13 +28,18 @@ class EncoderBlock(nn.Module):
 
 
 class SignTransformer(nn.Module):
-    def __init__(self, feature_dim: int, classes: int, d_model: int = 96, heads: int = 4, layers: int = 2, ff: int = 192, dropout: float = 0.1, seq_len: int = 32, stem: bool = False):
+    def __init__(self, feature_dim: int, classes: int, d_model: int = 96, heads: int = 4, layers: int = 2, ff: int = 192, dropout: float = 0.1, seq_len: int = 32, stem: bool = False, shape_embed: bool = False):
         super().__init__()
         self.d_model = d_model
         self.heads = heads
         self.ff = ff
         self.stem = stem
+        self.shape_embed = shape_embed
         self.proj = nn.Linear(feature_dim, d_model)
+        if shape_embed:
+            # Wrist-centered hand shape lives at channels 147:210 of the rich and fine layouts.
+            self.shape_fc1 = nn.Linear(63, 32)
+            self.shape_fc2 = nn.Linear(32, d_model)
         self.pos = nn.Parameter(torch.zeros(1, seq_len, d_model))
         if stem:
             # Depthwise temporal filters stay cheap in the browser. Pointwise mixes channels.
@@ -54,6 +59,9 @@ class SignTransformer(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = self.proj(x)
+        if self.shape_embed:
+            shape = x[:, :, 147:210]
+            h = h + self.shape_fc2(F.relu(self.shape_fc1(shape)))
         if self.stem:
             y = h.transpose(1, 2)
             y = F.relu(self.pw1(self.dw1(y)))
@@ -77,6 +85,11 @@ def export_state(model: SignTransformer) -> dict[str, np.ndarray]:
         "fc.weight": model.fc.weight.detach().cpu().numpy(),
         "fc.bias": model.fc.bias.detach().cpu().numpy(),
     }
+    if model.shape_embed:
+        weights["shape.fc1.weight"] = model.shape_fc1.weight.detach().cpu().numpy()
+        weights["shape.fc1.bias"] = model.shape_fc1.bias.detach().cpu().numpy()
+        weights["shape.fc2.weight"] = model.shape_fc2.weight.detach().cpu().numpy()
+        weights["shape.fc2.bias"] = model.shape_fc2.bias.detach().cpu().numpy()
     if model.stem:
         for name in ("dw1", "pw1", "dw2", "pw2"):
             conv = getattr(model, name)
@@ -163,8 +176,17 @@ def _apply_stem(h: np.ndarray, weights: dict[str, np.ndarray]) -> np.ndarray:
     return h
 
 
+def _apply_shape(seq: np.ndarray, h: np.ndarray, weights: dict[str, np.ndarray]) -> np.ndarray:
+    if "shape.fc1.weight" not in weights:
+        return h
+    shape = seq[:, 147:210]
+    hidden = np.maximum(_linear(shape, weights["shape.fc1.weight"], weights["shape.fc1.bias"]), 0)
+    return h + _linear(hidden, weights["shape.fc2.weight"], weights["shape.fc2.bias"])
+
+
 def forward_logits(seq: np.ndarray, weights: dict[str, np.ndarray], heads: int, layers: int) -> np.ndarray:
-    h = _apply_stem(_linear(seq, weights["proj.weight"], weights["proj.bias"]), weights)
+    h = _apply_shape(seq, _linear(seq, weights["proj.weight"], weights["proj.bias"]), weights)
+    h = _apply_stem(h, weights)
     h = h + weights["pos"][: seq.shape[0]]
     for index in range(layers):
         prefix = f"b{index}"

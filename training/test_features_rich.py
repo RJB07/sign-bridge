@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from features import RICH_FEATURE_DIM, frames_from_raw, sequence_features_rich
+from features import FINE_FEATURE_DIM, RICH_FEATURE_DIM, frames_from_raw, sequence_features_fine, sequence_features_rich
 
 
 def _hand(x: float, y: float) -> np.ndarray:
@@ -79,6 +79,17 @@ class RichFeatureTests(unittest.TestCase):
         features = sequence_features_rich(frames)
         self.assertEqual(features.shape[1], RICH_FEATURE_DIM)
         self.assertTrue(np.isfinite(features).all())
+
+    def test_fine_features_extend_the_rich_vector(self):
+        frames = _frames(0.7)
+        frames[0]["lips"] = np.stack([_pose(0.5, 0.2)[0] for _ in range(12)])
+        rich = sequence_features_rich(frames)
+        fine = sequence_features_fine(frames)
+        self.assertEqual(fine.shape, (3, FINE_FEATURE_DIM))
+        np.testing.assert_allclose(fine[:, :RICH_FEATURE_DIM], rich)
+        self.assertTrue(np.isfinite(fine).all())
+        curls = fine[:, -5:]
+        self.assertTrue(np.all(np.abs(curls) <= 1))
 
 
 if __name__ == "__main__":
