@@ -165,7 +165,11 @@ def augment_sequence(seq: np.ndarray, rng: np.random.Generator, strength: str = 
         low_frac = 0.55 if strong else 0.75
         high_frac = 1.6 if strong else 1.35
         low = max(3, int(seq.shape[0] * low_frac))
-        high = min(48, max(low + 1, int(round(seq.shape[0] * high_frac)) + 1))
+        high = max(low + 1, int(round(seq.shape[0] * high_frac)) + 1)
+        # Cap the warp at 48 frames. A long non-game clip can make `low` itself
+        # land on that cap, and NumPy rejects integers(low, high) when low >= high.
+        high = min(48, high)
+        low = min(low, high - 1)
         seq = resample_sequence(seq, int(rng.integers(low, high)))
     if strong and seq.shape[0] > 6 and rng.random() < 0.55:
         span = int(rng.integers(max(4, int(seq.shape[0] * 0.65)), seq.shape[0] + 1))

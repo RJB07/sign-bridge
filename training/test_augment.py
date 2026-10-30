@@ -21,6 +21,14 @@ class AugmentTests(unittest.TestCase):
         self.assertEqual(out.shape[1], FEATURE_DIM)
         self.assertGreaterEqual(out.shape[0], 3)
 
+    def test_long_sequence_can_be_augmented(self):
+        rng = np.random.default_rng(2)
+        seq = rng.normal(size=(85, FEATURE_DIM)).astype(np.float32)
+        for _ in range(12):
+            out = augment_sequence(seq, rng)
+            self.assertEqual(out.shape[1], FEATURE_DIM)
+            self.assertGreaterEqual(out.shape[0], 3)
+
     def test_strong_augment_keeps_width(self):
         rng = np.random.default_rng(1)
         seq = rng.normal(size=(12, FEATURE_DIM)).astype(np.float32)
