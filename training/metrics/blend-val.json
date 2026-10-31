@@ -1,0 +1,225 @@
+{
+  "shippedValTop1": 0.5553,
+  "fineEnsembleValTop1": 0.5553,
+  "fineEnsembleValTop5": 0.8073,
+  "signerEnsembleValTop1": 0.5377,
+  "signerEnsembleValTop5": 0.8047,
+  "best": {
+    "members": [
+      "fine-0",
+      "fine-2",
+      "signer-0",
+      "signer-2"
+    ],
+    "weights": [
+      0.2222,
+      0.2222,
+      0.3333,
+      0.2222
+    ],
+    "valTop1": 0.5739,
+    "valTop5": 0.8179
+  },
+  "top": [
+    {
+      "members": [
+        "fine-0",
+        "fine-2",
+        "signer-0",
+        "signer-2"
+      ],
+      "weights": [
+        0.2222,
+        0.2222,
+        0.3333,
+        0.2222
+      ],
+      "valTop1": 0.5739,
+      "valTop5": 0.8179
+    },
+    {
+      "members": [
+        "fine-0",
+        "fine-2",
+        "signer-1",
+        "signer-2"
+      ],
+      "weights": [
+        0.2308,
+        0.3077,
+        0.3077,
+        0.1538
+      ],
+      "valTop1": 0.5728,
+      "valTop5": 0.8235
+    },
+    {
+      "members": [
+        "fine-0",
+        "fine-1",
+        "fine-2",
+        "signer-1"
+      ],
+      "weights": [
+        0.125,
+        0.25,
+        0.25,
+        0.375
+      ],
+      "valTop1": 0.5717,
+      "valTop5": 0.8222
+    },
+    {
+      "members": [
+        "fine-1",
+        "fine-2",
+        "signer-1",
+        "signer-2"
+      ],
+      "weights": [
+        0.3,
+        0.3,
+        0.3,
+        0.1
+      ],
+      "valTop1": 0.5717,
+      "valTop5": 0.8198
+    },
+    {
+      "members": [
+        "fine-1",
+        "fine-2",
+        "signer-0",
+        "signer-2"
+      ],
+      "weights": [
+        0.3077,
+        0.2308,
+        0.2308,
+        0.2308
+      ],
+      "valTop1": 0.57,
+      "valTop5": 0.8218
+    },
+    {
+      "members": [
+        "fine-0",
+        "fine-1",
+        "signer-1",
+        "signer-2"
+      ],
+      "weights": [
+        0.2,
+        0.2667,
+        0.2667,
+        0.2667
+      ],
+      "valTop1": 0.5693,
+      "valTop5": 0.8222
+    },
+    {
+      "members": [
+        "fine-1",
+        "fine-2",
+        "signer-0",
+        "signer-1"
+      ],
+      "weights": [
+        0.2308,
+        0.3077,
+        0.1538,
+        0.3077
+      ],
+      "valTop1": 0.5693,
+      "valTop5": 0.822
+    },
+    {
+      "members": [
+        "fine-0",
+        "fine-2",
+        "signer-0",
+        "signer-1"
+      ],
+      "weights": [
+        0.2857,
+        0.2857,
+        0.1429,
+        0.2857
+      ],
+      "valTop1": 0.5691,
+      "valTop5": 0.8222
+    },
+    {
+      "members": [
+        "fine-0",
+        "fine-1",
+        "signer-0",
+        "signer-1"
+      ],
+      "weights": [
+        0.2727,
+        0.2727,
+        0.0909,
+        0.3636
+      ],
+      "valTop1": 0.5685,
+      "valTop5": 0.8192
+    },
+    {
+      "members": [
+        "fine-0",
+        "fine-1",
+        "fine-2",
+        "signer-0"
+      ],
+      "weights": [
+        0.1667,
+        0.1667,
+        0.3333,
+        0.3333
+      ],
+      "valTop1": 0.5682,
+      "valTop5": 0.8164
+    },
+    {
+      "members": [
+        "fine-0",
+        "fine-1",
+        "signer-0",
+        "signer-2"
+      ],
+      "weights": [
+        0.25,
+        0.25,
+        0.25,
+        0.25
+      ],
+      "valTop1": 0.5678,
+      "valTop5": 0.8181
+    },
+    {
+      "members": [
+        "fine-0",
+        "fine-2",
+        "signer-1"
+      ],
+      "weights": [
+        0.2222,
+        0.3333,
+        0.4444
+      ],
+      "valTop1": 0.5676,
+      "valTop5": 0.822
+    }
+  ],
+  "testReported": false,
+  "counts": {
+    "validation": 4623
+  },
+  "latencyProbes": {
+    "note": "Int8 is dequantized before the same float matmul, so it does not shorten the browser loop. Structured FF pruning does.",
+    "fine2ValTop1": 0.5284,
+    "fine2Int8ValTop1": 0.5254,
+    "fine2PrunedFf240ValTop1": 0.4051
+  }
+}

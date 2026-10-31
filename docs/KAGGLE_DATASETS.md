@@ -9,7 +9,7 @@ These two sets are the ones that would change the model if a Kaggle API token is
 - License: CC BY 4.0. Do not use the landmarks to identify a person.
 - What is in it: `train.csv` (`path`, `participant_id`, `sequence_id`, `sign`), `sign_to_prediction_index_map.json` (the same 250 glosses), and `train_landmark_files/{participant_id}/{sequence_id}.parquet`.
 - Each parquet is long-form MediaPipe Holistic: `frame`, `type` (`face`, `pose`, `left_hand`, `right_hand`), `landmark_index`, `x`, `y`, `z`. About 94,000 sequences from 21 signers. The archive is on the order of 50 GB.
-- What it adds over the frames we train on now: the same words, including hello, thank you, please, yes, and no, but at the original video frame rate instead of the ~5 fps stills in `sign/popsign-images`, and hundreds of examples per gloss instead of the 64 game clips per gloss in the shipped core subset. That is the most direct way to raise signer-independent top-1 without changing the label set. It does not add “help”; help is not one of the 250.
+- What it adds over the frames we train on now: the same words, including hello, thank you, please, yes, and no, but at the original video frame rate instead of the ~5 fps stills in `sign/popsign-images`, and hundreds of examples per gloss instead of the 64 game clips per gloss in the shipped core subset. That is the most direct way to raise signer-independent top-1 without changing the label set. It does not add help, sorry, name, doctor, or bathroom. Those are outside the 250. The quick-phrase row puts the English on screen, and fingerspelling is how a signer produces them.
 - How to run it end to end, once a token is in the environment:
 
 ```bash

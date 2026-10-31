@@ -51,7 +51,7 @@ A distilled width-160, 2-layer copy of this ensemble was measured so mirror aver
 
 A later 192×3 run scaled the wrist-centered hand by palm size, kept the left-to-right mirror, and added 3D camera, body-proportion, and frame-rate augmentation. Validation top-1 was 53.8% without mirror averaging and 54.1% with it (top-5 80.7%). That is below 55.5%, so the test list was not opened. Mirror averaging commits in 259 ms. The copy without it commits in 131 ms. The shipped weights stay the 56.7% file.
 
-Hello, thank you, please, yes, and no are in the 250. Help is not. ASL Citizen and WLASL were not used.
+Hello, thank you, please, yes, and no are in the 250. Help is not. The quick-phrase row also covers water, potty, and sick, which are in the 250, and sorry, name, doctor, and bathroom, which are not. Potty is the gloss; bathroom is not. A missing word can be tapped onto the caption as English, or fingerspelled while the hand is still. Google ASL Signs (CC BY 4.0) is the same 250 and does not add help, sorry, name, doctor, or bathroom. Google ASL Fingerspelling, treated as CC BY 4.0 after the data page is confirmed, can spell those words with signer ids. The MIT letter model already spells them, and that split is not signer-independent. ASL Citizen and WLASL were not used.
 
 Fingerspelling A–Z, including J and Z, is trained on `sid220/asl-now-fingerspelling` (MIT). Filename-hash test top-1 is 92.3%. That split is not signer-independent because the files have no participant id.
 

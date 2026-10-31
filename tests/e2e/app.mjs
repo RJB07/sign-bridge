@@ -124,6 +124,16 @@ try {
     clear.click();
   });
   await page.waitForFunction(() => document.querySelectorAll('.caption-word').length === 0);
+  await page.click('#phrase-help');
+  await page.waitForFunction(() => [...document.querySelectorAll('.caption-word')].some((node) => node.textContent?.trim() === 'help'));
+  const helped = await page.$eval('#english-line', (node) => node.textContent?.trim() ?? '');
+  assert(helped === 'Help.', `Quick phrase Help should read "Help.", saw "${helped}"`);
+  await page.evaluate(() => {
+    const clear = [...document.querySelectorAll('.caption-stage .caption-actions button')].find((node) => node.textContent?.trim() === 'Clear');
+    if (!(clear instanceof HTMLButtonElement)) throw new Error('caption Clear is missing');
+    clear.click();
+  });
+  await page.waitForFunction(() => document.querySelectorAll('.caption-word').length === 0);
   await page.click('#replay-held-out');
   await page.waitForSelector('.caption-word');
   word = await page.$eval('.caption-word', (node) => node.textContent?.trim() ?? '');

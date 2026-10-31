@@ -14,6 +14,7 @@ import {
 } from './personalize/personalSigns';
 import { publicUrl } from './publicUrl';
 import { glossesToEnglish } from './textAssembly/glossEnglish';
+import { QUICK_PHRASES, phraseInRecognizer } from './recognition/vocabularyGap';
 import { SignTextAssembler } from './textAssembly/SignTextAssembler';
 import { MediaPipeTracker } from './tracking/MediaPipeTracker';
 import { HearingChannel } from './reverseChannel/HearingChannel';
@@ -447,6 +448,32 @@ function App() {
           </div>
         )}
         {topGuesses && <p className="top-guesses">Other guesses: {topGuesses}</p>}
+        <div className="phrase-panel">
+          <p id="phrase-note" className="caption-kicker">Quick phrases</p>
+          <p className="phrase-note">Tap a word to add English. Spell means it is not one of the 250 signs: hold still and fingerspell it, or tap to put the word on screen.</p>
+          <div className="phrase-row" role="group" aria-label="Quick phrases" aria-describedby="phrase-note">
+            {QUICK_PHRASES.map((phrase) => {
+              const spell = !phraseInRecognizer(phrase);
+              return (
+                <button
+                  key={phrase.id}
+                  id={`phrase-${phrase.id}`}
+                  type="button"
+                  className="phrase-target"
+                  aria-label={spell ? `${phrase.label}, not in the recognizer. Adds the English word. Fingerspell to sign it.` : `Add ${phrase.label}`}
+                  onClick={() => {
+                    assemblerRef.current?.pushSign(phrase.text, 1);
+                    setPredictedSign(phrase.label);
+                    setMatchConfidence(100);
+                    setJustAdded(phrase.label);
+                  }}
+                >
+                  {phrase.label}{spell ? ' · spell' : ''}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div className="caption-actions">
           <button type="button" onClick={() => assemblerRef.current?.undo()} disabled={words.length + spelling.length === 0}>Undo</button>
           <button type="button" onClick={() => assemblerRef.current?.clearBuffer()} disabled={words.length + spelling.length === 0}>Clear</button>

@@ -877,6 +877,45 @@ html,
   font-size: 1.25rem;
   font-weight: 700;
 }
+.phrase-panel {
+  margin-top: 14px;
+}
+.phrase-note {
+  margin: 0 0 8px;
+  color: #f5f5f5;
+  font-size: 1rem;
+  line-height: 1.35;
+  max-width: 46rem;
+}
+.app-shell[data-theme="contrast"] .phrase-note,
+.app-shell[data-theme="contrast"] .phrase-panel .caption-kicker {
+  color: #ffe600;
+}
+.phrase-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.phrase-target {
+  min-height: 48px;
+  min-width: 48px;
+  padding: 0.45rem 0.85rem;
+  border: 3px solid #ffe600;
+  border-radius: 14px;
+  background: #ffe600;
+  color: #111;
+  font: inherit;
+  font-size: 1.15rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.phrase-target:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+.app-shell[data-theme="contrast"] .phrase-target:focus-visible {
+  outline-color: #ffe600;
+}
 .choice-row {
   display: flex;
   flex-wrap: wrap;
