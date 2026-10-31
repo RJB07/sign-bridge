@@ -1,0 +1,17 @@
+{
+  "note": "Commit times on this machine after the blocked matmul and the blocked attention dots. Preview is one member and no mirror.",
+  "shipped4": { "members": 4, "dModel": 192, "layers": 3, "tta": false, "previewMs": 24.3, "commitMs": 96.1 },
+  "mirrorTta4": { "members": 4, "dModel": 192, "layers": 3, "tta": true, "previewMs": 24.0, "commitMs": 194.1 },
+  "members5": { "members": 5, "dModel": 192, "layers": 3, "tta": false, "previewMs": 24.6, "commitMs": 122.0 },
+  "members6": { "members": 6, "dModel": 192, "layers": 3, "tta": false, "previewMs": 24.9, "commitMs": 147.4 },
+  "wideRandom": [
+    { "name": "d256-l3-ff640", "members": 1, "commitMs": 40.7 },
+    { "name": "d256-l3-ff640", "members": 2, "commitMs": 83.7 },
+    { "name": "d256-l4-ff640", "members": 1, "commitMs": 52.7 },
+    { "name": "d256-l4-ff640", "members": 2, "commitMs": 106.5 },
+    { "name": "d224-l4-ff560", "members": 1, "commitMs": 42.4 },
+    { "name": "d224-l4-ff560", "members": 2, "commitMs": 87.4 },
+    { "name": "d256-l3-ff1024", "members": 1, "commitMs": 52.7 },
+    { "name": "d256-l3-ff1024", "members": 2, "commitMs": 108.0 }
+  ]
+}

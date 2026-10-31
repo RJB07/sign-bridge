@@ -259,35 +259,99 @@ function mha(x: Float32Array, time: number, dim: number, inW: Float32Array, inB:
   const qkv = linear(x, time, dim, inW, inB);
   const dHead = dim / heads;
   const scale = 1 / Math.sqrt(dHead);
+  const stride = dim * 3;
   const mixed = new Float32Array(time * dim);
+  const tail = dHead & ~3;
   for (let h = 0; h < heads; h++) {
+    const qOff = h * dHead;
+    const kOff = dim + qOff;
+    const vOff = dim * 2 + qOff;
     const scores = new Float32Array(time * time);
     for (let i = 0; i < time; i++) {
+      const qBase = i * stride + qOff;
       let max = -Infinity;
-      for (let j = 0; j < time; j++) {
-        let dot = 0;
-        for (let k = 0; k < dHead; k++) {
-          const q = qkv[i * dim * 3 + h * dHead + k];
-          const key = qkv[j * dim * 3 + dim + h * dHead + k];
-          dot += q * key;
+      let j = 0;
+      for (; j + 3 < time; j += 4) {
+        let d0 = 0;
+        let d1 = 0;
+        let d2 = 0;
+        let d3 = 0;
+        const p0 = j * stride + kOff;
+        const p1 = (j + 1) * stride + kOff;
+        const p2 = (j + 2) * stride + kOff;
+        const p3 = (j + 3) * stride + kOff;
+        let k = 0;
+        for (; k < tail; k += 4) {
+          const q0 = qkv[qBase + k];
+          const q1 = qkv[qBase + k + 1];
+          const q2 = qkv[qBase + k + 2];
+          const q3 = qkv[qBase + k + 3];
+          d0 += q0 * qkv[p0 + k] + q1 * qkv[p0 + k + 1] + q2 * qkv[p0 + k + 2] + q3 * qkv[p0 + k + 3];
+          d1 += q0 * qkv[p1 + k] + q1 * qkv[p1 + k + 1] + q2 * qkv[p1 + k + 2] + q3 * qkv[p1 + k + 3];
+          d2 += q0 * qkv[p2 + k] + q1 * qkv[p2 + k + 1] + q2 * qkv[p2 + k + 2] + q3 * qkv[p2 + k + 3];
+          d3 += q0 * qkv[p3 + k] + q1 * qkv[p3 + k + 1] + q2 * qkv[p3 + k + 2] + q3 * qkv[p3 + k + 3];
         }
+        for (; k < dHead; k++) {
+          const qv = qkv[qBase + k];
+          d0 += qv * qkv[p0 + k];
+          d1 += qv * qkv[p1 + k];
+          d2 += qv * qkv[p2 + k];
+          d3 += qv * qkv[p3 + k];
+        }
+        const s0 = d0 * scale;
+        const s1 = d1 * scale;
+        const s2 = d2 * scale;
+        const s3 = d3 * scale;
+        const at = i * time + j;
+        scores[at] = s0;
+        scores[at + 1] = s1;
+        scores[at + 2] = s2;
+        scores[at + 3] = s3;
+        if (s0 > max) max = s0;
+        if (s1 > max) max = s1;
+        if (s2 > max) max = s2;
+        if (s3 > max) max = s3;
+      }
+      for (; j < time; j++) {
+        let dot = 0;
+        const p = j * stride + kOff;
+        for (let k = 0; k < dHead; k++) dot += qkv[qBase + k] * qkv[p + k];
         const value = dot * scale;
         scores[i * time + j] = value;
         if (value > max) max = value;
       }
       let denom = 0;
-      for (let j = 0; j < time; j++) {
-        const e = Math.exp(scores[i * time + j] - max);
-        scores[i * time + j] = e;
+      for (let t = 0; t < time; t++) {
+        const e = Math.exp(scores[i * time + t] - max);
+        scores[i * time + t] = e;
         denom += e;
       }
-      for (let j = 0; j < time; j++) scores[i * time + j] /= denom;
-      for (let k = 0; k < dHead; k++) {
-        let sum = 0;
-        for (let j = 0; j < time; j++) {
-          sum += scores[i * time + j] * qkv[j * dim * 3 + 2 * dim + h * dHead + k];
+      const inv = 1 / denom;
+      for (let t = 0; t < time; t++) scores[i * time + t] *= inv;
+      let k = 0;
+      for (; k + 3 < dHead; k += 4) {
+        let s0 = 0;
+        let s1 = 0;
+        let s2 = 0;
+        let s3 = 0;
+        for (let t = 0; t < time; t++) {
+          const sv = scores[i * time + t];
+          const base = t * stride + vOff + k;
+          s0 += sv * qkv[base];
+          s1 += sv * qkv[base + 1];
+          s2 += sv * qkv[base + 2];
+          s3 += sv * qkv[base + 3];
         }
-        mixed[i * dim + h * dHead + k] = sum;
+        const out = i * dim + qOff + k;
+        mixed[out] = s0;
+        mixed[out + 1] = s1;
+        mixed[out + 2] = s2;
+        mixed[out + 3] = s3;
+      }
+      for (; k < dHead; k++) {
+        let sum = 0;
+        for (let t = 0; t < time; t++) sum += scores[i * time + t] * qkv[t * stride + vOff + k];
+        mixed[i * dim + qOff + k] = sum;
       }
     }
   }
