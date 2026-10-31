@@ -55,6 +55,8 @@ The stored test scores are 0.5667 top-1 and 0.7938 top-5. Validation top-1 on th
 
 When the gate will not add a word, three large buttons offer the top guesses. Tap the one you signed. The previous model’s weakest validation glosses were near neighbors such as pen/pencil, cheek/eye, and mouth/lips. Those distances are what the extra face features are for.
 
+A faster three-member student (width 160, 2 layers) was distilled from this ensemble so mirror averaging could fit in 130 ms. On validation it scored 53.7% top-1 and 80.9% top-5. Mirror averaging was 53.5% top-1, so it was not used. Commit time without it is 62 ms. Because validation top-1 is below 55.5%, the test list was not scored again and this file stays. The weak glosses (finger, pen, mouth, go, read, and others) got a wider speed warp and a shorter time crop during that distillation. Details: `training/metrics/fast160-val.json` and `training/metrics/fine-val-worst.json`.
+
 An earlier model was 50.6% top-1 and 75.1% top-5 on 2,744 test clips drawn from a partial shard download. That list is smaller than these 4,540 clips, so it is not a paired comparison. A 32-gloss model earlier on this branch scored 59.1% top-1. That number is not comparable either: this model chooses among 250 signs. Chance falls from 3.1% to 0.4%. Conversational glosses are in the 250. Per-class recall on this test list: hello 44% (18 clips), thank you 88% (16), please 69% (16), yes 47% (17), no 53% (19), water 78% (18), mom 63% (16), dad 53% (17). **Help is not in this 250-sign list.**
 
 Per-class precision and recall: `training/metrics/asl_en_metrics.json`.

@@ -47,6 +47,8 @@ Trained on **PopSign ASL v1.0** in `sign/popsign-images` (CC BY 4.0). Official g
 
 The shipped file divides logits by 1.10 before the softmax. That temperature was fit on this model’s validation logits and does not change the argmax. If the gate does not commit, the screen keeps the top three words as large tap targets. The extra features are the distances from the wrist and fingertips to the lips, eyes, and cheek proxies, plus fingertip curl, because validation errors clustered on near pairs such as pen/pencil, cheek/eye, and mouth/lips.
 
+A distilled width-160, 2-layer copy of this ensemble was measured so mirror averaging could fit under 130 ms. Its validation top-1 was 53.7% and top-5 was 80.9%. Mirror averaging was lower, at 53.5%. The test list was not opened. The shipped weights stay the 56.7% file. Weak glosses in that run (finger, pen, mouth, go, read, sleep, and others) used a wider speed warp and a shorter crop.
+
 Hello, thank you, please, yes, and no are in the 250. Help is not. ASL Citizen and WLASL were not used.
 
 Fingerspelling A–Z, including J and Z, is trained on `sid220/asl-now-fingerspelling` (MIT). Filename-hash test top-1 is 92.3%. That split is not signer-independent because the files have no participant id.

@@ -1,0 +1,34 @@
+{
+  "experiment": "fast160",
+  "featureLayout": "fine",
+  "featureDim": 389,
+  "dModel": 160,
+  "layers": 2,
+  "ff": 320,
+  "useTta": false,
+  "dtype": "f16",
+  "valTop1": 0.536664503569111,
+  "valTop5": 0.808998485831711,
+  "valTop1Plain": 0.536664503569111,
+  "valTop1Tta": 0.5345014060134112,
+  "temperature": 1.0594,
+  "nll": 1.8559,
+  "nllCalibrated": 1.8512,
+  "latency": {
+    "previewMs": 20.8,
+    "commitMs": 62.17,
+    "members": 3,
+    "layers": 2,
+    "dModel": 160,
+    "featureDim": 389,
+    "featureLayout": "fine",
+    "tta": false
+  },
+  "latencyOk": true,
+  "testReported": false,
+  "seeds": [
+    0,
+    1,
+    2
+  ]
+}
