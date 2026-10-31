@@ -17,19 +17,20 @@ import torch
 from blend_members import load_member, val_rows
 from features import SEQ_LEN, resample_sequence
 from sign_transformer import export_state, forward_logits
-from train_sequence_model import calibrate_gate, encode_f32, load_index, write_browser_file
+from train_sequence_model import encode_f32, load_index, write_browser_file
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = [
     ("fine", 0, 1.0),
-    ("fine", 2, 1.5),
-    ("signer", 1, 2.0),
+    ("fine", 2, 1.0),
+    ("signer", 0, 1.5),
+    ("signer", 2, 1.0),
 ]
 ORDER = ["hello", "thankyou", "please", "yes", "no", "water", "mom", "dad"]
 
 
 def main() -> None:
-    report = json.loads((ROOT / "training/metrics/blend-test.json").read_text(encoding="utf-8"))
+    report = json.loads((ROOT / "training/metrics/blend4-test.json").read_text(encoding="utf-8"))
     if not report.get("beatsShipped"):
         raise SystemExit("Refusing to export a blend that did not beat the shipped test score")
     cache = ROOT / "training/cache"
@@ -42,10 +43,8 @@ def main() -> None:
         models.append(load_member(directory / f"member-{seed}.pt", len(labels), 480))
     from score_blend import logits_for
 
-    val_logits, val_y = logits_for(SPEC, rows, labels, cache)
-    gate = calibrate_gate(val_logits, val_y, 0.72)
     public = ROOT / "public/models/asl-en-sequence.json"
-    floors = [round(float(value), 3) for value in gate["floors"]]
+    floors = report["classThresholds"]
     write_browser_file(
         public,
         models,
@@ -54,10 +53,10 @@ def main() -> None:
         False,
         389,
         "fine",
-        gate["threshold"]["threshold"],
-        gate["threshold"]["margin"],
+        report["threshold"],
+        report["margin"],
         floors,
-        gate["temperature"],
+        report["temperature"],
     )
     payload = json.loads(public.read_text(encoding="utf-8"))
     for member, (family, _seed, weight) in zip(payload["members"], SPEC):
@@ -67,13 +66,13 @@ def main() -> None:
         "testTop1": report["testTop1"],
         "testTop5": report["testTop5"],
         "testMacroRecall": report["testMacroRecall"],
-        "validationTop1": report["chosen"]["valTop1"],
-        "validationTop5": report["chosen"]["valTop5"],
+        "validationTop1": report["valTop1"],
+        "validationTop5": report["valTop5"],
         "counts": {"train": 40139, "validation": report["counts"]["validation"], "test": report["counts"]["test"]},
         "classes": len(labels),
-        "blend": report["chosen"]["members"],
-        "commitMs": report["chosen"]["latency"]["commitMs"],
-        "previewMs": report["chosen"]["latency"]["previewMs"],
+        "blend": report["members"],
+        "commitMs": report["latency"]["commitMs"],
+        "previewMs": report["latency"]["previewMs"],
     }
     payload["dataset"] = {
         "name": "PopSign ASL v1.0",
@@ -131,7 +130,7 @@ def main() -> None:
         ),
         encoding="utf-8",
     )
-    print(json.dumps({"model": str(public), "clips": [clip["label"] for clip in clips], "temperature": gate["temperature"], "valTop1": report["chosen"]["valTop1"], "testTop1": report["testTop1"]}, indent=2))
+    print(json.dumps({"model": str(public), "clips": [clip["label"] for clip in clips], "temperature": report["temperature"], "valTop1": report["valTop1"], "testTop1": report["testTop1"]}, indent=2))
 
 
 if __name__ == "__main__":
