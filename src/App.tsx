@@ -4,7 +4,8 @@ import { LiveInterpreter, type LiveSnapshot } from './recognition/liveInterprete
 import { assessFrame } from './recognition/frameQuality';
 import { letterModelFromJson, predictLetter } from './recognition/letterModel';
 import { sequenceFeatures, sequenceFeaturesFine, sequenceFeaturesRich, sequenceFeaturesSigner } from './recognition/features';
-import { decodeF32, glossToEnglish, modelFromJson, predictSequence, type Prediction, type SequenceModel } from './recognition/sequenceModel';
+import { decodeF32, glossToEnglish, modelFromJson, predictPrepared, predictSequence, type Prediction, type SequenceModel } from './recognition/sequenceModel';
+import type { FeatureFrame, HandSide } from './recognition/features';
 import {
   applyPersonalLabel,
   loadPersonalSamples,
@@ -20,13 +21,18 @@ import { MediaPipeTracker } from './tracking/MediaPipeTracker';
 import { HearingChannel } from './reverseChannel/HearingChannel';
 import type { ConversationMessage, FrameLandmarksData, TrackingStatus } from './types/signbridge';
 
-type DemoClip = { label: string; features: string };
+type DemoClip = { label: string; features: string; signerFeatures?: string };
+
+function layoutsOf(model: SequenceModel): Set<string> {
+  return new Set(model.members.map((member) => member.featureLayout ?? model.featureLayout));
+}
 
 function classifierFor(
   model: SequenceModel,
   personal: () => PersonalSample[],
   rememberSequence: (sequence: number[][]) => void,
   onPersonal: (active: boolean) => void,
+  hand: () => HandSide | null,
 ) {
   const withPersonal = (sequence: number[][], prediction: Prediction) => {
     const next = applyPersonalLabel(prediction, sequence, personal());
@@ -43,6 +49,15 @@ function classifierFor(
       return withPersonal(sequence, predictSequence(model, sequence));
     },
     predictPreview: (sequence: number[][]) => withPersonal(sequence, predictSequence(model, sequence, { members: 1, tta: false })),
+    predictFrames: layoutsOf(model).size > 1
+      ? (frames: FeatureFrame[], preview: boolean) => {
+          const fine = sequenceFeaturesFine(frames, hand());
+          const signer = sequenceFeaturesSigner(frames, hand());
+          if (!preview && fine.length > 0) rememberSequence(fine);
+          const sequence = fine.length > 0 ? fine : signer;
+          return withPersonal(sequence, predictPrepared(model, { fine, signer }, preview ? { members: 1, tta: false } : {}));
+        }
+      : undefined,
   };
 }
 
@@ -56,6 +71,8 @@ function App() {
   const demoClipsRef = useRef<DemoClip[]>([]);
   const demoIndexRef = useRef(0);
   const featureDimRef = useRef(273);
+  const modelRef = useRef<SequenceModel | null>(null);
+  const forcedHandRef = useRef<HandSide | null>(null);
   const letterPredictRef = useRef<((landmarks: import('./recognition/features').Landmark[]) => { label: string; confidence: number } | null) | null>(null);
   const uiStampRef = useRef(0);
 
@@ -167,13 +184,14 @@ function App() {
         const model = modelFromJson(payload);
         if (cancelled) return;
         featureDimRef.current = model.featureDim;
+        modelRef.current = model;
         if (letterResponse.ok) {
           const letters = letterModelFromJson(await letterResponse.json());
           letterPredictRef.current = (hand) => predictLetter(letters, hand);
         }
         interpreterRef.current = new LiveInterpreter(classifierFor(model, () => personalRef.current, (sequence) => {
           lastSequenceRef.current = sequence;
-        }, setPersonalHit), {
+        }, setPersonalHit, () => forcedHandRef.current), {
           letterPredict: (hand) => letterPredictRef.current?.(hand) ?? null,
           features: model.featureLayout === 'signer'
             ? sequenceFeaturesSigner
@@ -272,6 +290,7 @@ function App() {
 
   useEffect(() => {
     const hand = forcedHand === 'LEFT' ? 'Left' : forcedHand === 'RIGHT' ? 'Right' : null;
+    forcedHandRef.current = hand;
     interpreterRef.current?.setForcedHand(hand);
   }, [forcedHand]);
 
@@ -306,13 +325,21 @@ function App() {
     if (!interpreter || clips.length === 0) return;
     const clip = clips[demoIndexRef.current % clips.length];
     demoIndexRef.current += 1;
-    const flat = decodeF32(clip.features);
     const dim = featureDimRef.current;
-    const sequence: number[][] = [];
-    for (let t = 0; t < flat.length / dim; t++) {
-      sequence.push(Array.from(flat.slice(t * dim, (t + 1) * dim)));
-    }
-    const result = interpreter.classifyPrepared(sequence);
+    const rows = (encoded: string) => {
+      const flat = decodeF32(encoded);
+      const sequence: number[][] = [];
+      for (let t = 0; t < flat.length / dim; t++) sequence.push(Array.from(flat.slice(t * dim, (t + 1) * dim)));
+      return sequence;
+    };
+    const fine = rows(clip.features);
+    const signer = clip.signerFeatures ? rows(clip.signerFeatures) : fine;
+    const model = modelRef.current;
+    const prediction = model ? predictPrepared(model, { fine, signer }) : null;
+    const result = prediction
+      ? { label: glossToEnglish(prediction.label), confidence: prediction.confidence, margin: prediction.margin }
+      : interpreter.classifyPrepared(fine);
+    lastSequenceRef.current = fine;
     setPredictedSign(result.label);
     setMatchConfidence(result.confidence * 100);
     setPhase('idle');

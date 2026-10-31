@@ -11,6 +11,10 @@ export type WeightBlob = {
   weights: Record<string, string>;
   weightShapes: Record<string, number[]>;
   dtype?: 'f16' | 'f32';
+  /** Which landmark layout this member was trained on, when the ensemble mixes them. */
+  featureLayout?: 'legacy' | 'rich' | 'fine' | 'signer';
+  /** Logit weight. Members are averaged by these weights. */
+  blendWeight?: number;
 };
 
 export type SequenceModel = {
@@ -343,8 +347,23 @@ export function modelFromJson(payload: ModelFile): SequenceModel {
     dModel: payload.dModel,
     heads: payload.heads,
     layers: payload.layers,
-    members: payload.members.map((member) => ({ ...member, dtype: payload.dtype === 'f16' ? 'f16' as const : 'f32' as const })),
+    members: payload.members.map((member) => ({
+      ...member,
+      dtype: payload.dtype === 'f16' ? 'f16' as const : 'f32' as const,
+      featureLayout: member.featureLayout === 'signer' || member.featureLayout === 'fine' || member.featureLayout === 'rich' || member.featureLayout === 'legacy'
+        ? member.featureLayout
+        : undefined,
+      blendWeight: typeof member.blendWeight === 'number' && member.blendWeight > 0 ? member.blendWeight : undefined,
+    })),
   };
+}
+
+function blendWeight(member: WeightBlob): number {
+  return member.blendWeight && member.blendWeight > 0 ? member.blendWeight : 1;
+}
+
+function prepareSequence(sequence: number[][], model: SequenceModel): number[][] {
+  return sequence.length === model.seqLen ? sequence : resampleSequence(sequence, model.seqLen);
 }
 
 export function logitsForSequence(model: SequenceModel, sequence: number[][]): Float32Array {
@@ -353,31 +372,61 @@ export function logitsForSequence(model: SequenceModel, sequence: number[][]): F
     throw new Error(`Expected ${model.seqLen}x${model.featureDim} features`);
   }
   const acc = new Float32Array(model.labels.length);
+  let weight = 0;
   for (const member of model.members) {
+    const scale = blendWeight(member);
     const logits = logitsForMember(prepared, member, model.dModel, model.heads, model.layers);
-    for (let i = 0; i < acc.length; i++) acc[i] += logits[i];
+    for (let i = 0; i < acc.length; i++) acc[i] += logits[i] * scale;
+    weight += scale;
   }
-  for (let i = 0; i < acc.length; i++) acc[i] /= model.members.length;
+  for (let i = 0; i < acc.length; i++) acc[i] /= weight || 1;
   return acc;
 }
 
-export function predictSequence(model: SequenceModel, sequence: number[][], options: PredictOptions = {}): Prediction {
-  const prepared = sequence.length === model.seqLen ? sequence : resampleSequence(sequence, model.seqLen);
+export type LayoutSequences = {
+  fine?: number[][];
+  signer?: number[][];
+  legacy?: number[][];
+  rich?: number[][];
+};
+
+export function predictPrepared(model: SequenceModel, sequences: LayoutSequences, options: PredictOptions = {}): Prediction {
   const useTta = options.tta ?? model.tta;
-  const mirrorDims = model.featureLayout === 'fine' || model.featureLayout === 'signer' ? 384 : undefined;
-  const views = useTta ? [prepared, mirrorSequence(prepared, mirrorDims)] : [prepared];
   const memberCount = Math.max(1, Math.min(options.members ?? model.members.length, model.members.length));
   const members = model.members.slice(0, memberCount);
+  const cached = new Map<string, number[][]>();
+  const viewFor = (layout: SequenceModel['featureLayout']): number[][] => {
+    const source = layout === 'signer'
+      ? sequences.signer ?? sequences.fine
+      : layout === 'legacy'
+        ? sequences.legacy ?? sequences.fine
+        : layout === 'rich'
+          ? sequences.rich ?? sequences.fine
+          : sequences.fine ?? sequences.signer ?? sequences.legacy ?? sequences.rich;
+    if (!source || source.length === 0) throw new Error('Missing features for this ensemble');
+    const key = layout + (useTta ? ':tta' : '');
+    const hit = cached.get(key);
+    if (hit) return hit;
+    const prepared = prepareSequence(source, model);
+    cached.set(key, prepared);
+    return prepared;
+  };
   const acc = new Float32Array(model.labels.length);
-  for (const view of views) {
-    for (const member of members) {
+  let weight = 0;
+  for (const member of members) {
+    const layout = member.featureLayout ?? model.featureLayout;
+    const prepared = viewFor(layout);
+    const mirrorDims = layout === 'fine' || layout === 'signer' ? 384 : undefined;
+    const views = useTta ? [prepared, mirrorSequence(prepared, mirrorDims)] : [prepared];
+    const scale = blendWeight(member);
+    for (const view of views) {
       const logits = logitsForMember(view, member, model.dModel, model.heads, model.layers);
-      for (let i = 0; i < acc.length; i++) acc[i] += logits[i];
+      for (let i = 0; i < acc.length; i++) acc[i] += logits[i] * scale;
+      weight += scale;
     }
   }
-  const denomViews = views.length * members.length;
   const temperature = model.temperature > 0 ? model.temperature : 1;
-  for (let i = 0; i < acc.length; i++) acc[i] /= denomViews * temperature;
+  for (let i = 0; i < acc.length; i++) acc[i] /= (weight || 1) * temperature;
   let max = -Infinity;
   for (let i = 0; i < acc.length; i++) if (acc[i] > max) max = acc[i];
   const probabilities = new Array<number>(acc.length);
@@ -402,6 +451,10 @@ export function predictSequence(model: SequenceModel, sequence: number[][], opti
     margin: (probabilities[best] ?? 0) - (second === -Infinity ? 0 : second),
     probabilities,
   };
+}
+
+export function predictSequence(model: SequenceModel, sequence: number[][], options: PredictOptions = {}): Prediction {
+  return predictPrepared(model, { fine: sequence, signer: sequence, legacy: sequence, rich: sequence }, options);
 }
 
 export const MODEL_FEATURE_DIM = FEATURE_DIM;

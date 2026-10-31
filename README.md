@@ -45,13 +45,13 @@ The shipped recognizer is three landmark transformers (width 192, 3 layers, floa
 | --- | --- |
 | Gloss vocabulary | **250** English glosses, the full PopSign / Google ASL Signs list |
 | Train / val / test clips | 40,139 / 4,623 / 4,540 |
-| Test top-1 | **56.7%** |
-| Test top-5 | **79.4%** |
-| Macro recall | 56.7% |
+| Test top-1 | **56.8%** |
+| Test top-5 | **79.7%** |
+| Macro recall | 56.8% |
 | Chance top-1 | 0.4% |
-| Live gate on test | 76.5% precision when it commits, on 54.8% of clips |
+| Live gate on test | 77.7% precision when it commits, on 53.5% of clips |
 
-The stored test scores are 0.5667 top-1 and 0.7938 top-5. Validation top-1 on the unchanged 4,623 clips is 55.5%, and validation top-5 is 80.7%. The previous shipped model, the same width and depth without the face offsets, scored 0.5515 and 0.7806 on these same 4,540 test clips. Mirror test-time augmentation did not clear the latency budget, so the file does not mirror at commit time. The file divides logits by a temperature of **1.10** before the softmax. That value was fit on the validation clips and does not change which gloss wins. One member previews in 43 ms and the three-member commit takes 128 ms, under the 130 ms budget.
+The stored test scores are 0.5676 top-1 and 0.7974 top-5. Validation top-1 on the unchanged 4,623 clips is 56.8%, and validation top-5 is 82.2%. Two members use the shoulder-scaled hand shape. The third uses the palm-scaled shape from the signer run. Their logits are averaged with validation weights 1, 1.5, and 2. The previous shipped file, three shoulder-scaled members, scored 0.5667 and 0.7938 on these same 4,540 clips. A four-member blend reached 57.4% on validation and commits in 174 ms, so it was not used. Int8 weights barely changed one member’s validation score and do not shorten the browser matmul. Cutting the feed-forward width from 480 to 240 dropped that member from 52.8% to 40.5% validation top-1. Mirror test-time augmentation did not clear the latency budget, so the file does not mirror at commit time. The file divides logits by a temperature of **1.065** before the softmax. That value was fit on the validation clips and does not change which gloss wins. One member previews in 43 ms and the three-member commit takes 130 ms.
 
 When the gate will not add a word, three large buttons offer the top guesses. Tap the one you signed. The previous model’s weakest validation glosses were near neighbors such as pen/pencil, cheek/eye, and mouth/lips. Those distances are what the extra face features are for.
 
@@ -59,11 +59,11 @@ Quick phrases sit under the caption. Hello, thank you, please, yes, no, water, p
 
 A faster three-member student (width 160, 2 layers) was distilled from this ensemble so mirror averaging could fit in 130 ms. On validation it scored 53.7% top-1 and 80.9% top-5. Mirror averaging was 53.5% top-1, so it was not used. Commit time without it is 62 ms. Because validation top-1 is below 55.5%, the test list was not scored again and this file stays. The weak glosses (finger, pen, mouth, go, read, and others) got a wider speed warp and a shorter time crop during that distillation. Details: `training/metrics/fast160-val.json` and `training/metrics/fine-val-worst.json`.
 
-The same 192×3 network was retrained with palm-sized hand shape, left hands mirrored into a right-hand frame, a small 3D camera rotation, a random hand-versus-body scale, and a frame-rate bend. On the unchanged 4,623 validation clips that ensemble is **53.8%** top-1 without a mirrored second view and **54.1%** top-1 with one (top-5 **80.7%**). Both are below 55.5%, so the test list was not scored. The mirrored commit takes 259 ms. Without the mirror the commit takes 131 ms, outside the 130 ms budget. The shipped file stays the 56.7% model. Details: `training/metrics/signer192-val.json`.
+The same 192×3 network was retrained with palm-sized hand shape, left hands mirrored into a right-hand frame, a small 3D camera rotation, a random hand-versus-body scale, and a frame-rate bend. On its own, that ensemble is **53.8%** validation top-1 without a mirrored second view and **54.1%** with one (top-5 **80.7%**). Below 55.5%, so that file was not scored on the test list by itself. One of its members is in the shipped blend above. Details: `training/metrics/signer192-val.json` and `training/metrics/blend-test.json`.
 
-An earlier model was 50.6% top-1 and 75.1% top-5 on 2,744 test clips drawn from a partial shard download. That list is smaller than these 4,540 clips, so it is not a paired comparison. A 32-gloss model earlier on this branch scored 59.1% top-1. That number is not comparable either: this model chooses among 250 signs. Chance falls from 3.1% to 0.4%. Conversational glosses are in the 250. Per-class recall on this test list: hello 44% (18 clips), thank you 88% (16), please 69% (16), yes 47% (17), no 53% (19), water 78% (18), mom 63% (16), dad 53% (17). **Help is not in this 250-sign list.**
+An earlier model was 50.6% top-1 and 75.1% top-5 on 2,744 test clips drawn from a partial shard download. That list is smaller than these 4,540 clips, so it is not a paired comparison. A 32-gloss model earlier on this branch scored 59.1% top-1. That number is not comparable either: this model chooses among 250 signs. Chance falls from 3.1% to 0.4%. Conversational glosses are in the 250. Per-class recall on this test list: hello 44% (18 clips), thank you 88% (16), please 69% (16), yes 47% (17), no 53% (19), water 83% (18), mom 56% (16), dad 65% (17). **Help is not in this 250-sign list.**
 
-Per-class precision and recall: `training/metrics/asl_en_metrics.json`.
+Focus-gloss precision and recall for this blend: `training/metrics/blend-test.json`. The full 250-class table in `training/metrics/asl_en_metrics.json` is the previous 56.7% file.
 
 Fingerspelling is a separate static network trained on the MIT dataset `sid220/asl-now-fingerspelling` (A–Z, including J and Z). Filename-hash holdout top-1 is **92.3%** (222 test frames). J recall 91% (11 frames), Z recall 100% (10 frames). **Signer ids are not in that dataset, so this letter number is not signer-independent.** Details: `training/metrics/fingerspelling_metrics.json`.
 

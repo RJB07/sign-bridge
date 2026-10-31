@@ -10,6 +10,8 @@ export type GlossClassifier = {
   predict: (sequence: number[][]) => Prediction;
   /** Cheaper score used for the on-screen guess. Commit still uses predict. */
   predictPreview?: (sequence: number[][]) => Prediction;
+  /** Mixed ensembles need one feature vector per layout. Preview runs the fast path. */
+  predictFrames?: (frames: FeatureFrame[], preview: boolean) => Prediction;
 };
 
 export type RawFrame = FeatureFrame & { timeMs: number };
@@ -302,9 +304,14 @@ export class LiveInterpreter {
 
   private rank(start: number, end: number): { label: string; confidence: number; top: LiveSnapshot['top'] } | null {
     const slice = this.frames.slice(Math.max(0, start), Math.max(start, end));
-    const features = this.options.features(slice, this.options.forcedHand);
-    if (features.length < 2) return null;
-    const prediction = (this.classifier.predictPreview ?? this.classifier.predict)(features);
+    if (slice.length < 2) return null;
+    let prediction: Prediction;
+    if (this.classifier.predictFrames) prediction = this.classifier.predictFrames(slice, true);
+    else {
+      const features = this.options.features(slice, this.options.forcedHand);
+      if (features.length < 2) return null;
+      prediction = (this.classifier.predictPreview ?? this.classifier.predict)(features);
+    }
     const order = prediction.probabilities
       .map((probability, index) => ({ label: glossToEnglish(this.classifier.labels[index] ?? ''), probability }))
       .sort((a, b) => b.probability - a.probability)
@@ -314,9 +321,14 @@ export class LiveInterpreter {
 
   private commitGloss(start: number, end: number, threshold: number): Commit | null {
     const slice = this.frames.slice(Math.max(0, start), Math.max(start, end));
-    const features = this.options.features(slice, this.options.forcedHand);
-    if (features.length < 2) return null;
-    const prediction = this.classifier.predict(features);
+    if (slice.length < 2) return null;
+    let prediction: Prediction;
+    if (this.classifier.predictFrames) prediction = this.classifier.predictFrames(slice, false);
+    else {
+      const features = this.options.features(slice, this.options.forcedHand);
+      if (features.length < 2) return null;
+      prediction = this.classifier.predict(features);
+    }
     const classIndex = this.classifier.labels.indexOf(prediction.label);
     const classMin = this.classifier.classThresholds?.[classIndex] ?? this.classifier.emitThreshold;
     if (prediction.confidence < Math.max(threshold, classMin) || prediction.margin < this.classifier.marginThreshold) return null;

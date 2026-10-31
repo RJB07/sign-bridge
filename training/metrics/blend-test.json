@@ -1,0 +1,179 @@
+{
+  "testReported": true,
+  "chosen": {
+    "name": "blend3",
+    "members": [
+      "fine-0",
+      "fine-2",
+      "signer-1"
+    ],
+    "weights": [
+      1.0,
+      1.5,
+      2.0
+    ],
+    "valTop1": 0.5678,
+    "valTop5": 0.822,
+    "latency": {
+      "previewMs": 42.78,
+      "commitMs": 129.94,
+      "members": 3,
+      "layers": 3,
+      "dModel": 192,
+      "featureDim": 389,
+      "featureLayout": "fine",
+      "tta": false
+    }
+  },
+  "temperature": 1.065,
+  "threshold": 0.4,
+  "margin": 0.04,
+  "testTop1": 0.5676,
+  "testTop5": 0.7974,
+  "testMacroRecall": 0.5675,
+  "testAtEmit": {
+    "precision": 0.7769,
+    "coverage": 0.535
+  },
+  "focus": [
+    {
+      "label": "dad",
+      "support": 17,
+      "predicted": 17,
+      "precision": 0.6471,
+      "recall": 0.6471
+    },
+    {
+      "label": "hello",
+      "support": 18,
+      "predicted": 16,
+      "precision": 0.5,
+      "recall": 0.4444
+    },
+    {
+      "label": "mom",
+      "support": 16,
+      "predicted": 16,
+      "precision": 0.5625,
+      "recall": 0.5625
+    },
+    {
+      "label": "no",
+      "support": 19,
+      "predicted": 13,
+      "precision": 0.7692,
+      "recall": 0.5263
+    },
+    {
+      "label": "please",
+      "support": 16,
+      "predicted": 16,
+      "precision": 0.6875,
+      "recall": 0.6875
+    },
+    {
+      "label": "thankyou",
+      "support": 16,
+      "predicted": 18,
+      "precision": 0.7778,
+      "recall": 0.875
+    },
+    {
+      "label": "water",
+      "support": 18,
+      "predicted": 18,
+      "precision": 0.8333,
+      "recall": 0.8333
+    },
+    {
+      "label": "yes",
+      "support": 17,
+      "predicted": 13,
+      "precision": 0.6154,
+      "recall": 0.4706
+    }
+  ],
+  "shippedTestTop1": 0.5667,
+  "beatsShipped": true,
+  "counts": {
+    "validation": 4623,
+    "test": 4540
+  },
+  "measured": [
+    {
+      "name": "blend4",
+      "members": [
+        "fine-0",
+        "fine-2",
+        "signer-0",
+        "signer-2"
+      ],
+      "weights": [
+        1.0,
+        1.0,
+        1.5,
+        1.0
+      ],
+      "valTop1": 0.5737,
+      "valTop5": 0.8179,
+      "latency": {
+        "previewMs": 43.39,
+        "commitMs": 173.52,
+        "members": 4,
+        "layers": 3,
+        "dModel": 192,
+        "featureDim": 389,
+        "featureLayout": "fine",
+        "tta": false
+      }
+    },
+    {
+      "name": "blend3",
+      "members": [
+        "fine-0",
+        "fine-2",
+        "signer-1"
+      ],
+      "weights": [
+        1.0,
+        1.5,
+        2.0
+      ],
+      "valTop1": 0.5678,
+      "valTop5": 0.822,
+      "latency": {
+        "previewMs": 42.78,
+        "commitMs": 129.94,
+        "members": 3,
+        "layers": 3,
+        "dModel": 192,
+        "featureDim": 389,
+        "featureLayout": "fine",
+        "tta": false
+      }
+    },
+    {
+      "name": "blend2",
+      "members": [
+        "fine-2",
+        "signer-1"
+      ],
+      "weights": [
+        1.0,
+        1.0
+      ],
+      "valTop1": 0.5602,
+      "valTop5": 0.8142,
+      "latency": {
+        "previewMs": 43.28,
+        "commitMs": 86.67,
+        "members": 2,
+        "layers": 3,
+        "dModel": 192,
+        "featureDim": 389,
+        "featureLayout": "fine",
+        "tta": false
+      }
+    }
+  ]
+}
