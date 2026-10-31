@@ -49,6 +49,8 @@ The shipped file divides logits by 1.10 before the softmax. That temperature was
 
 A distilled width-160, 2-layer copy of this ensemble was measured so mirror averaging could fit under 130 ms. Its validation top-1 was 53.7% and top-5 was 80.9%. Mirror averaging was lower, at 53.5%. The test list was not opened. The shipped weights stay the 56.7% file. Weak glosses in that run (finger, pen, mouth, go, read, sleep, and others) used a wider speed warp and a shorter crop.
 
+A later 192×3 run scaled the wrist-centered hand by palm size, kept the left-to-right mirror, and added 3D camera, body-proportion, and frame-rate augmentation. Validation top-1 was 53.8% without mirror averaging and 54.1% with it (top-5 80.7%). That is below 55.5%, so the test list was not opened. Mirror averaging commits in 259 ms. The copy without it commits in 131 ms. The shipped weights stay the 56.7% file.
+
 Hello, thank you, please, yes, and no are in the 250. Help is not. ASL Citizen and WLASL were not used.
 
 Fingerspelling A–Z, including J and Z, is trained on `sid220/asl-now-fingerspelling` (MIT). Filename-hash test top-1 is 92.3%. That split is not signer-independent because the files have no participant id.
