@@ -110,10 +110,24 @@ try {
 
   await page.click('#replay-held-out');
   await page.waitForSelector('.caption-word');
-  const word = await page.$eval('.caption-word', (node) => node.textContent?.trim() ?? '');
+  let word = await page.$eval('.caption-word', (node) => node.textContent?.trim() ?? '');
   assert(word.length > 0, 'Replay did not add an English word');
   const english = await page.$eval('#english-line', (node) => node.textContent?.trim() ?? '');
   assert(english === 'Hello.', `Expected an English sentence "Hello.", saw "${english}"`);
+  await page.click('#replay-held-out');
+  await page.waitForFunction(() => document.querySelectorAll('.caption-word').length >= 2);
+  const sentence = await page.$eval('#english-line', (node) => node.textContent?.trim() ?? '');
+  assert(/hello/i.test(sentence) && /thank you/i.test(sentence), `Expected two replayed words, saw "${sentence}"`);
+  await page.evaluate(() => {
+    const clear = [...document.querySelectorAll('.caption-stage .caption-actions button')].find((node) => node.textContent?.trim() === 'Clear');
+    if (!(clear instanceof HTMLButtonElement)) throw new Error('caption Clear is missing');
+    clear.click();
+  });
+  await page.waitForFunction(() => document.querySelectorAll('.caption-word').length === 0);
+  await page.click('#replay-held-out');
+  await page.waitForSelector('.caption-word');
+  word = await page.$eval('.caption-word', (node) => node.textContent?.trim() ?? '');
+  assert(word.length > 0, 'Replay after Clear did not add a word');
   await page.type('#personal-label', 'hello');
   await page.click('#save-personal');
   await page.waitForFunction(() => document.querySelector('#personal-message')?.textContent?.includes('Saved'));

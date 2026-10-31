@@ -4,7 +4,14 @@ import unittest
 
 import numpy as np
 
-from features import FINE_FEATURE_DIM, RICH_FEATURE_DIM, frames_from_raw, sequence_features_fine, sequence_features_rich
+from features import (
+    FINE_FEATURE_DIM,
+    RICH_FEATURE_DIM,
+    frames_from_raw,
+    sequence_features_fine,
+    sequence_features_rich,
+    sequence_features_signer,
+)
 
 
 def _hand(x: float, y: float) -> np.ndarray:
@@ -90,6 +97,38 @@ class RichFeatureTests(unittest.TestCase):
         self.assertTrue(np.isfinite(fine).all())
         curls = fine[:, -5:]
         self.assertTrue(np.all(np.abs(curls) <= 1))
+
+    def test_palm_shape_ignores_hand_size(self):
+        base = _frames(0.7)
+        grown = []
+        for frame in base:
+            hand = frame["right"].copy()
+            wrist = hand[0].copy()
+            hand = wrist + 1.8 * (hand - wrist)
+            grown.append({"left": None, "right": hand, "pose": frame["pose"].copy()})
+        signer_base = sequence_features_signer(base)
+        signer_grown = sequence_features_signer(grown)
+        np.testing.assert_allclose(signer_base[:, 147:210], signer_grown[:, 147:210], atol=1e-4)
+        fine_base = sequence_features_fine(base)
+        fine_grown = sequence_features_fine(grown)
+        self.assertFalse(np.allclose(fine_base[:, 147:210], fine_grown[:, 147:210], atol=1e-3))
+        self.assertEqual(signer_base.shape[1], FINE_FEATURE_DIM)
+
+    def test_left_hand_signer_matches_the_right_hand(self):
+        source = _frames(0.7)
+        right = sequence_features_signer(source)
+        left_frames = []
+        for frame in source:
+            flipped = {
+                "left": frame["right"].copy(),
+                "right": None,
+                "pose": frame["pose"].copy(),
+            }
+            flipped["left"][:, 0] = 1.0 - frame["right"][:, 0]
+            flipped["pose"][:, 0] = 1.0 - frame["pose"][:, 0]
+            left_frames.append(flipped)
+        left = sequence_features_signer(left_frames)
+        np.testing.assert_allclose(left, right, atol=1e-5)
 
 
 if __name__ == "__main__":

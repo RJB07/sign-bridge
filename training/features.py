@@ -126,7 +126,14 @@ def _face_origin_and_scale(hand: np.ndarray | None, pose: np.ndarray | None) -> 
     return origin, float(scale)
 
 
-def sequence_features_rich(frames: list[dict], forced: str | None = None) -> np.ndarray:
+def _palm_scale(hand: np.ndarray | None, fallback: float) -> float:
+    if hand is None:
+        return fallback
+    palm = _xy_dist(hand[0], hand[9])
+    return palm if palm > 1e-4 else fallback
+
+
+def sequence_features_rich(frames: list[dict], forced: str | None = None, palm_shape: bool = False) -> np.ndarray:
     """Hand and arm coordinates relative to the nose, plus shape and velocity.
 
     The dominant hand is mirrored into a right-hand frame, same as
@@ -159,7 +166,8 @@ def sequence_features_rich(frames: list[dict], forced: str | None = None) -> np.
         if hand is None:
             shape = np.zeros(63, dtype=np.float32)
         else:
-            shape = _pack(hand, hand[0], scale, mirror, 63)
+            shape_scale = _palm_scale(hand, scale) if palm_shape else scale
+            shape = _pack(hand, hand[0], shape_scale, mirror, 63)
         vel_dom = np.zeros(63, dtype=np.float32) if prev_dom is None else (dom_face - prev_dom)
         vel_pose = np.zeros(21, dtype=np.float32) if prev_pose is None else (pose_f - prev_pose)
         prev_dom = dom_face
@@ -204,14 +212,14 @@ def _face_targets(pose: np.ndarray | None, lips: np.ndarray | None, origin: np.n
     return [placed(point) for point in eyes_cheeks]
 
 
-def sequence_features_fine(frames: list[dict], forced: str | None = None) -> np.ndarray:
+def sequence_features_fine(frames: list[dict], forced: str | None = None, palm_shape: bool = False) -> np.ndarray:
     """Rich features plus hand-to-face offsets and fingertip curl.
 
     Offsets are the dominant wrist and five fingertips minus the lip center,
     each eye, and each cheek proxy. Curl is the cosine at each finger joint.
     Shape is (T, 389). The first 294 values match `sequence_features_rich`.
     """
-    rich = sequence_features_rich(frames, forced)
+    rich = sequence_features_rich(frames, forced, palm_shape=palm_shape)
     if rich.shape[0] == 0:
         return np.zeros((0, FINE_FEATURE_DIM), dtype=np.float32)
     dominant = choose_dominant(frames, forced)
@@ -245,6 +253,15 @@ def sequence_features_fine(frames: list[dict], forced: str | None = None) -> np.
             curls = np.array([_unit_dot(hand[a], hand[b], hand[c]) for a, b, c in FINE_CURLS], dtype=np.float32)
         extras.append(np.concatenate([*offsets, curls]).astype(np.float32))
     return np.concatenate([rich, np.stack(extras)], axis=1).astype(np.float32)
+
+
+def sequence_features_signer(frames: list[dict], forced: str | None = None) -> np.ndarray:
+    """Fine features with the hand shape scaled by palm size, not shoulder width.
+
+    Location stays in shoulder units so a longer arm does not resize the fingers.
+    Left-handed signers are still mirrored into a right-hand frame.
+    """
+    return sequence_features_fine(frames, forced, palm_shape=True)
 
 
 def frames_from_raw(raw: np.ndarray) -> list[dict]:
@@ -357,7 +374,7 @@ def _augment_rich(seq: np.ndarray, rng: np.random.Generator, layout: str, timed:
     `layout="rich"` is the 294-d face-relative vector. `layout="legacy"` is the
     273-d vector. Position channels are shifted; velocity channels are not.
     """
-    if layout == "fine":
+    if layout in {"fine", "signer"}:
         expected = FINE_FEATURE_DIM
         xyz_dims = FINE_XYZ
     elif layout == "rich":
@@ -412,6 +429,75 @@ def _augment_rich(seq: np.ndarray, rng: np.random.Generator, layout: str, timed:
     return seq.astype(np.float32)
 
 
+def _rotate_3d(seq: np.ndarray, yaw: float, pitch: float, roll: float, xyz_dims: int) -> np.ndarray:
+    """Small camera-angle change. Yaw, pitch, and roll are radians."""
+    cy, sy = float(np.cos(yaw)), float(np.sin(yaw))
+    cp, sp = float(np.cos(pitch)), float(np.sin(pitch))
+    cr, sr = float(np.cos(roll)), float(np.sin(roll))
+    rotation = np.array(
+        [
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ],
+        dtype=np.float32,
+    )
+    out = np.array(seq, dtype=np.float32, copy=True)
+    head = out[:, :xyz_dims].reshape(seq.shape[0], -1, 3)
+    out[:, :xyz_dims] = np.einsum("ij,tkj->tki", rotation, head).reshape(seq.shape[0], xyz_dims)
+    return out
+
+
+def _jitter_frame_rate(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Bend time so the middle of the sign is faster or slower."""
+    count = seq.shape[0]
+    if count < 6:
+        return seq
+    bend = float(rng.uniform(-0.35, 0.35))
+    sample_at = np.linspace(0.0, 1.0, count)
+    warped = np.clip(sample_at + bend * np.sin(np.pi * sample_at), 0.0, 1.0)
+    source = np.linspace(0.0, 1.0, count)
+    out = np.empty_like(seq)
+    for column in range(seq.shape[1]):
+        out[:, column] = np.interp(warped, source, seq[:, column])
+    return out.astype(np.float32)
+
+
+def _augment_signer(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """3D camera jitter, body-proportion noise, and frame-rate jitter on fine features."""
+    seq = np.array(seq, dtype=np.float32, copy=True)
+    if seq.shape[1] != FINE_FEATURE_DIM:
+        raise ValueError(f"signer augmentation expected width {FINE_FEATURE_DIM}, got {seq.shape[1]}")
+    if rng.random() < 0.85:
+        seq = _jitter_frame_rate(seq, rng)
+    if seq.shape[0] > 4 and rng.random() < 0.9:
+        low = max(3, int(seq.shape[0] * 0.45))
+        high = max(low + 1, int(round(seq.shape[0] * 1.9)) + 1)
+        high = min(48, high)
+        low = min(low, high - 1)
+        seq = resample_sequence(seq, int(rng.integers(low, high)))
+    if seq.shape[0] > 6 and rng.random() < 0.55:
+        span = int(rng.integers(max(4, int(seq.shape[0] * 0.55)), seq.shape[0] + 1))
+        start = int(rng.integers(0, seq.shape[0] - span + 1))
+        seq = seq[start : start + span]
+    if rng.random() < 0.5:
+        seq = mirror_sequence(seq, FINE_XYZ)
+    seq = _rotate_3d(
+        seq,
+        float(rng.uniform(-0.4, 0.4)),
+        float(rng.uniform(-0.18, 0.18)),
+        float(rng.uniform(-0.18, 0.18)),
+        FINE_XYZ,
+    )
+    seq = _rotate_scale(seq, 0.0, float(rng.uniform(0.85, 1.15)), FINE_XYZ)
+    seq[:, 0:63] *= float(rng.uniform(0.85, 1.18))
+    seq[:, 147:210] *= float(rng.uniform(0.75, 1.3))
+    if rng.random() < 0.4:
+        seq[:, 63:126] = 0
+    seq += rng.normal(0.0, 0.015, size=seq.shape).astype(np.float32)
+    return seq.astype(np.float32)
+
+
 def augment_sequence(seq: np.ndarray, rng: np.random.Generator, strength: str = "base", layout: str = "legacy") -> np.ndarray:
     """Time warp, mirror, rotation, scale, dropped landmarks, and light noise.
 
@@ -424,8 +510,12 @@ def augment_sequence(seq: np.ndarray, rng: np.random.Generator, strength: str = 
     are short, so a crop never goes below four frames. Mirror stands in for a
     left-hand signer.
     """
-    if strength == "timed" or layout == "fine" or strength == "rich":
-        return _augment_rich(seq, rng, "fine" if layout == "fine" else layout, timed=strength == "timed")
+    if strength == "timed":
+        return _augment_rich(seq, rng, "fine" if layout in {"fine", "signer"} else layout, timed=True)
+    if strength == "signer" or layout == "signer":
+        return _augment_signer(seq, rng)
+    if layout == "fine" or strength == "rich":
+        return _augment_rich(seq, rng, "fine" if layout == "fine" else layout, timed=False)
     seq = np.array(seq, dtype=np.float32, copy=True)
     strong = strength == "strong"
     if seq.shape[0] > 4 and rng.random() < (0.85 if strong else 0.75):

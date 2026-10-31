@@ -145,7 +145,13 @@ export function sequenceFeatures(frames: FeatureFrame[], forced?: HandSide | nul
   return rows;
 }
 
-export function sequenceFeaturesRich(frames: FeatureFrame[], forced?: HandSide | null): number[][] {
+function palmScale(hand: Landmark[] | null, fallback: number): number {
+  if (!hand) return fallback;
+  const palm = xyDist(hand[0], hand[9]);
+  return palm > 1e-4 ? palm : fallback;
+}
+
+export function sequenceFeaturesRich(frames: FeatureFrame[], forced?: HandSide | null, palmShape = false): number[][] {
   const dominant = chooseDominant(frames, forced);
   if (!dominant) return [];
   const mirror = dominant === 'Left';
@@ -163,7 +169,8 @@ export function sequenceFeaturesRich(frames: FeatureFrame[], forced?: HandSide |
     const otherFace = pack(other, origin, scale, mirror, 63);
     const posePoints = pose ? POSE_INDEXES.map((index) => pose[index]) : null;
     const poseFeat = pack(posePoints, origin, scale, mirror, 21);
-    const shape = hand ? pack(hand, { ...hand[0] }, scale, mirror, 63) : new Array(63).fill(0);
+    const shapeScale = palmShape ? palmScale(hand, scale) : scale;
+    const shape = hand ? pack(hand, { ...hand[0] }, shapeScale, mirror, 63) : new Array(63).fill(0);
     const velDom = prevDom ? domFace.map((value, index) => value - prevDom![index]) : new Array(63).fill(0);
     const velPose = prevPose ? poseFeat.map((value, index) => value - prevPose![index]) : new Array(21).fill(0);
     prevDom = domFace;
@@ -190,8 +197,8 @@ function placePoint(point: Landmark, origin: Landmark, scale: number, mirror: bo
   };
 }
 
-export function sequenceFeaturesFine(frames: FeatureFrame[], forced?: HandSide | null): number[][] {
-  const rich = sequenceFeaturesRich(frames, forced);
+export function sequenceFeaturesFine(frames: FeatureFrame[], forced?: HandSide | null, palmShape = false): number[][] {
+  const rich = sequenceFeaturesRich(frames, forced, palmShape);
   if (rich.length === 0) return [];
   const dominant = chooseDominant(frames, forced);
   if (!dominant) return [];
@@ -251,6 +258,11 @@ export function sequenceFeaturesFine(frames: FeatureFrame[], forced?: HandSide |
     const curls = hand ? FINE_CURLS.map(([a, b, c]) => unitDot(hand[a], hand[b], hand[c])) : [0, 0, 0, 0, 0];
     return [...rich[time], ...offsets, ...curls];
   });
+}
+
+/** Fine features with wrist-centered shape scaled by palm size, not shoulder width. */
+export function sequenceFeaturesSigner(frames: FeatureFrame[], forced?: HandSide | null): number[][] {
+  return sequenceFeaturesFine(frames, forced, true);
 }
 
 export function mirrorSequence(sequence: number[][], xyzDims?: number): number[][] {

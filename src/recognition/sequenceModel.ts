@@ -25,8 +25,8 @@ export type SequenceModel = {
   layers: number;
   classThresholds: number[];
   tta: boolean;
-  /** `rich` is nose-relative hands. `fine` adds face offsets and finger curl. */
-  featureLayout: 'legacy' | 'rich' | 'fine';
+  /** `rich` is nose-relative hands. `fine` adds face offsets and finger curl. `signer` scales shape by palm size. */
+  featureLayout: 'legacy' | 'rich' | 'fine' | 'signer';
   /** Softmax temperature. 1 leaves confidence unchanged. Values above 1 reduce overconfidence. */
   temperature: number;
   members: WeightBlob[];
@@ -45,7 +45,7 @@ type ModelFile = {
   classThresholds?: number[];
   tta?: boolean;
   dtype?: 'f16' | 'f32';
-  featureLayout?: 'legacy' | 'rich' | 'fine';
+  featureLayout?: 'legacy' | 'rich' | 'fine' | 'signer';
   temperature?: number;
   members: WeightBlob[];
 };
@@ -330,7 +330,13 @@ export function modelFromJson(payload: ModelFile): SequenceModel {
     marginThreshold: payload.marginThreshold,
     classThresholds: payload.classThresholds ?? payload.labels.map(() => payload.emitThreshold),
     tta: Boolean(payload.tta),
-    featureLayout: payload.featureLayout === 'fine' ? 'fine' : payload.featureLayout === 'rich' ? 'rich' : 'legacy',
+    featureLayout: payload.featureLayout === 'signer'
+      ? 'signer'
+      : payload.featureLayout === 'fine'
+        ? 'fine'
+        : payload.featureLayout === 'rich'
+          ? 'rich'
+          : 'legacy',
     temperature: typeof payload.temperature === 'number' && payload.temperature > 0 ? payload.temperature : 1,
     featureDim: payload.featureDim,
     seqLen: payload.seqLen,
@@ -358,7 +364,8 @@ export function logitsForSequence(model: SequenceModel, sequence: number[][]): F
 export function predictSequence(model: SequenceModel, sequence: number[][], options: PredictOptions = {}): Prediction {
   const prepared = sequence.length === model.seqLen ? sequence : resampleSequence(sequence, model.seqLen);
   const useTta = options.tta ?? model.tta;
-  const views = useTta ? [prepared, mirrorSequence(prepared, model.featureLayout === 'fine' ? 384 : undefined)] : [prepared];
+  const mirrorDims = model.featureLayout === 'fine' || model.featureLayout === 'signer' ? 384 : undefined;
+  const views = useTta ? [prepared, mirrorSequence(prepared, mirrorDims)] : [prepared];
   const memberCount = Math.max(1, Math.min(options.members ?? model.members.length, model.members.length));
   const members = model.members.slice(0, memberCount);
   const acc = new Float32Array(model.labels.length);

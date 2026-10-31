@@ -34,7 +34,7 @@ American Sign Language only, English text out. `src/languages/aslEnglish.ts` is 
 
 1. `@mediapipe/tasks-vision` Holistic landmarker in video mode, one pass, about 15 frames per second. The WASM and the task file are served from this origin (`public/vendor/mediapipe`, `public/models/holistic_landmarker.task`) so a repeat visit works offline.
 2. A 32-step landmark transformer over nose-relative hands, wrist-centered shape, seven pose points, frame-to-frame motion, hand-to-face offsets (lips, eyes, cheek proxies), and fingertip curl, plus a small hand-shape embedding. The shipped file is three members, width 192, 3 layers, float16. The on-screen guess uses one member. The committed gloss uses the full ensemble and, when the file says so, a mirrored second view. This file does not.
-3. A confidence and margin gate, including a per-class floor, chosen on the validation signers after temperature 1.10. A motion segment emits a gloss once per sign. If the gate does not emit, the top three words stay on screen as large tap targets. A segment that never becomes still is closed after 75 frames. A non-numeric wrist is treated as no hand. Letters wait a short cooldown after a gloss.
+3. A confidence and margin gate, including a per-class floor, chosen on the validation signers after temperature 1.10. A motion segment emits a gloss once per sign. A brief slowdown followed by motion again splits the next sign, so a short sentence does not need a full pause. If the gate does not emit, the top three words stay on screen as large tap targets. A segment that never becomes still is closed after 75 frames. Low light (no face and no hands) and fingertips outside the frame are coaching warnings, and a non-numeric wrist is treated as no hand. Letters wait a short cooldown after a gloss.
 4. A static letter network for A–Z, including J and Z, when the hand is still. The geometric letter helper remains only if that file fails to load.
 5. `src/textAssembly/glossEnglish.ts` turns the committed glosses into a short English sentence and leaves the glosses visible. It is word order and a few fixed phrases, not ASL grammar. Speaking that sentence aloud is off until the hearing-person control is turned on.
 6. Optional “Your signs” samples in `localStorage` can replace the shared guess when the motion is close to a saved one.
@@ -57,7 +57,7 @@ Google ASL Signs (`asl-signs`, CC BY 4.0) is the same 250 glosses as native-rate
 
 ## Limits
 
-- Isolated glosses in. The English sentence is a small rule list, not continuous signing and not full ASL grammar.
+- Isolated glosses in. A brief slowdown can separate two signs, but the English sentence is still a small rule list, not full ASL grammar.
 - PopSign is mostly one-handed phone signing.
 - Training frames are about 5 per second. Live video is resampled to the same 32-step window.
 - The letter-model holdout is not signer-independent.

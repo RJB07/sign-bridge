@@ -3,7 +3,7 @@ import { ASL_ENGLISH_PACK } from './languages/aslEnglish';
 import { LiveInterpreter, type LiveSnapshot } from './recognition/liveInterpreter';
 import { assessFrame } from './recognition/frameQuality';
 import { letterModelFromJson, predictLetter } from './recognition/letterModel';
-import { sequenceFeatures, sequenceFeaturesFine, sequenceFeaturesRich } from './recognition/features';
+import { sequenceFeatures, sequenceFeaturesFine, sequenceFeaturesRich, sequenceFeaturesSigner } from './recognition/features';
 import { decodeF32, glossToEnglish, modelFromJson, predictSequence, type Prediction, type SequenceModel } from './recognition/sequenceModel';
 import {
   applyPersonalLabel,
@@ -174,11 +174,13 @@ function App() {
           lastSequenceRef.current = sequence;
         }, setPersonalHit), {
           letterPredict: (hand) => letterPredictRef.current?.(hand) ?? null,
-          features: model.featureLayout === 'fine'
-            ? sequenceFeaturesFine
-            : model.featureLayout === 'rich'
-              ? sequenceFeaturesRich
-              : sequenceFeatures,
+          features: model.featureLayout === 'signer'
+            ? sequenceFeaturesSigner
+            : model.featureLayout === 'fine'
+              ? sequenceFeaturesFine
+              : model.featureLayout === 'rich'
+                ? sequenceFeaturesRich
+                : sequenceFeatures,
         });
         setModelLabels(model.labels.map(glossToEnglish));
         if (payload.metrics) {

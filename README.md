@@ -28,7 +28,7 @@ Install: in Chrome, Edge, or Safari, use **Install SignBridge** or **Add to Home
 
 ```bash
 npm run build          # static site plus the service worker
-npm run test:e2e       # replay, undo, typed reply, contrast theme, offline reload
+npm run test:e2e       # two-sign replay, clear, undo, typed reply, contrast theme, offline reload
 ```
 
 `npm run build` checks `SIGNATURE.json` first. That file has to keep the lead attribution. End-to-end tests need Chrome (`CHROME_PATH` if it is not on the default path). GitHub Actions runs the unit tests, the Python split checks, the build, and the browser test. It does not download PopSign.
@@ -63,7 +63,7 @@ Per-class precision and recall: `training/metrics/asl_en_metrics.json`.
 
 Fingerspelling is a separate static network trained on the MIT dataset `sid220/asl-now-fingerspelling` (A–Z, including J and Z). Filename-hash holdout top-1 is **92.3%** (222 test frames). J recall 91% (11 frames), Z recall 100% (10 frames). **Signer ids are not in that dataset, so this letter number is not signer-independent.** Details: `training/metrics/fingerspelling_metrics.json`.
 
-Live output is suppressed unless the score clears a threshold picked on the validation signers, including a per-class floor when the model file has one. A gloss is added once per motion segment. If that gate does not commit, the top three words stay on screen as large buttons and one tap adds the word you meant. **Send line** commits the caption into the conversation. Speaking aloud, if you turned it on, reads that line to the hearing person. It does not run by default.
+Live output is suppressed unless the score clears a threshold picked on the validation signers, including a per-class floor when the model file has one. A gloss is added once per motion segment. A brief slowdown, then motion again, starts the next sign, so two words in a sentence do not need a full pause. If that gate does not commit, the top three words stay on screen as large buttons and one tap adds the word you meant. **Send line** commits the caption into the conversation. Speaking aloud, if you turned it on, reads that line to the hearing person. It does not run by default.
 
 Fingerspelling letters A–Z, including J and Z, come from a static landmark network. See the metrics file for the holdout caveat.
 
@@ -93,11 +93,12 @@ pip install -r training/requirements.txt
 PYTHONPATH=training python training/scan_popsign.py
 PYTHONPATH=training python training/build_cache.py --train-cap 200 --nongame-cap 100000 --core-only --with-nongame --workers 3
 PYTHONPATH=training python training/featurize_fine.py --cache training/cache --index index.jsonl
-PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --index index.jsonl --seq-subdir seq-fine --feature-layout fine --shape-embed --augment strong --hidden 192 --layers 3 --ff 480 --epochs 36 --patience 8 --warmup 3 --batch-size 128 --seeds 0,1,2 --label-smoothing 0.05 --experiment fine192 --artifact-dir training/artifacts/fine192 --hold-test --skip-student --latency-commit-ms 130 --resume
-PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --report-test --artifact-dir training/artifacts/fine192 --feature-layout fine
+PYTHONPATH=training python training/featurize_signer.py --cache training/cache --index index.jsonl
+PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --index index.jsonl --seq-subdir seq-signer --feature-layout signer --shape-embed --augment signer --hidden 192 --layers 3 --ff 480 --epochs 36 --patience 8 --warmup 3 --batch-size 128 --seeds 0,1,2 --label-smoothing 0.05 --experiment signer192 --artifact-dir training/artifacts/signer192 --hold-test --skip-student --latency-commit-ms 130 --latency-preview-ms 50 --resume
+PYTHONPATH=training python training/train_sequence_model.py --cache training/cache --report-test --artifact-dir training/artifacts/signer192 --feature-layout signer
 ```
 
-`--hold-test` picks mirror augmentation, float16, and a student on validation only. `--report-test` scores that selection on the test list once. The 55.2% model used the 294-d features without face offsets (`experiment core64-rich192`). The 53.9% model used the 273-d features, width 128, and 2 layers (`experiment core64-nongame`). `--with-nongame` keeps that validation and test list and adds non-game training clips only.
+`--hold-test` picks mirror augmentation, float16, and a student on validation only. `--report-test` scores that selection on the test list once. The signer layout is the same 389-d vector as `seq-fine`, except the wrist-centered hand shape is scaled by palm size instead of shoulder width, and a left hand is still mirrored into a right-hand frame. Its augmentation adds a small 3D camera rotation, a random hand-versus-body scale, and a frame-rate bend. The 56.7% model used shoulder-scaled shape (`experiment fine192`). The 55.2% model used the 294-d features without face offsets (`experiment core64-rich192`). The 53.9% model used the 273-d features, width 128, and 2 layers (`experiment core64-nongame`). `--with-nongame` keeps that validation and test list and adds non-game training clips only. Replace the shipped file only when the signer-disjoint test top-1 beats 56.7% and the three-member commit stays under about 130 ms.
 
 Extraction writes `training/cache/` (gitignored). The trainer compares a three-seed ensemble with a smaller distilled student, with and without mirror test-time augmentation, and it keeps float16 weights when the validation top-1 drop stays within half a point. It replaces `public/models/asl-en-sequence.json` only when the signer-disjoint test top-1 is higher than the file already there and the browser latency check passes. Either way it writes `training/metrics/asl_en_run.json`.
 

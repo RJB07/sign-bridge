@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from features import FEATURE_DIM, FINE_FEATURE_DIM, RICH_FEATURE_DIM, augment_sequence, mirror_sequence
+from features import FEATURE_DIM, FINE_FEATURE_DIM, FINE_XYZ, RICH_FEATURE_DIM, _jitter_frame_rate, _rotate_3d, augment_sequence, mirror_sequence
 
 
 class AugmentTests(unittest.TestCase):
@@ -55,6 +55,22 @@ class AugmentTests(unittest.TestCase):
         self.assertEqual(out.shape[1], FINE_FEATURE_DIM)
         self.assertGreaterEqual(out.shape[0], 3)
         self.assertTrue(np.isfinite(out).all())
+
+    def test_signer_augment_keeps_width_and_rotates_xyz_only(self):
+        rng = np.random.default_rng(7)
+        seq = rng.normal(size=(18, FINE_FEATURE_DIM)).astype(np.float32)
+        seq[:, -5:] = 0.4
+        rotated = _rotate_3d(seq, 0.3, 0.1, -0.12, FINE_XYZ)
+        np.testing.assert_allclose(rotated[:, -5:], 0.4)
+        self.assertFalse(np.allclose(rotated[:, :3], seq[:, :3]))
+        jittered = _jitter_frame_rate(seq, np.random.default_rng(8))
+        self.assertEqual(jittered.shape, seq.shape)
+        self.assertTrue(np.isfinite(jittered).all())
+        for _ in range(8):
+            out = augment_sequence(seq, rng, strength="signer", layout="signer")
+            self.assertEqual(out.shape[1], FINE_FEATURE_DIM)
+            self.assertGreaterEqual(out.shape[0], 3)
+            self.assertTrue(np.isfinite(out).all())
 
     def test_timed_speed_crop_keeps_fine_width(self):
         rng = np.random.default_rng(6)

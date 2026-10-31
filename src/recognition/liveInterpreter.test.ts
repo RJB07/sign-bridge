@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Landmark } from './features';
+import { assessFrame } from './frameQuality';
 import { LiveInterpreter, type GlossClassifier, type LiveSnapshot, type RawFrame } from './liveInterpreter';
 
 function handAt(x: number): Landmark[] {
@@ -170,5 +171,68 @@ describe('live interpreter', () => {
     }
     expect(texts).toContain('apple');
     expect(texts).not.toContain('A');
+  });
+
+  it('stays idle in low light when the camera sees nobody', () => {
+    const hint = assessFrame({ leftHand: null, rightHand: null, poseDetected: false });
+    expect(hint.level).toBe('warn');
+    expect(hint.message).toMatch(/light/i);
+    const interpreter = new LiveInterpreter(classifier(0.99), {
+      startSpeed: 0.01,
+      stopSpeed: 0.004,
+      minFrames: 3,
+      earlyIntervalMs: 0,
+      earlyBoost: 0,
+    });
+    for (let i = 0; i < 12; i++) {
+      const snap = interpreter.push({ timeMs: i * 40, left: null, right: null, pose: null });
+      expect(snap.phase).toBe('idle');
+      expect(snap.committed).toBeNull();
+    }
+  });
+
+  it('warns when fingertips leave the frame and ignores a hand with no wrist', () => {
+    const cropped = handAt(0.5);
+    cropped[8] = { x: 1.05, y: 0.4, z: 0 };
+    cropped[12] = { x: 0.5, y: -0.05, z: 0 };
+    const hint = assessFrame({ leftHand: null, rightHand: cropped, poseDetected: true });
+    expect(hint.level).toBe('warn');
+    expect(hint.message).toMatch(/frame/i);
+    const interpreter = new LiveInterpreter(classifier(0.99), {
+      startSpeed: 0.01,
+      minFrames: 3,
+      earlyIntervalMs: 0,
+      earlyBoost: 0,
+    });
+    const visible = interpreter.push({ timeMs: 0, left: null, right: cropped, pose: null });
+    expect(visible.committed).toBeNull();
+    const missingWrist = handAt(0.4);
+    missingWrist[0] = { x: Number.NaN, y: 0.4, z: 0 };
+    const hidden = interpreter.push({ timeMs: 40, left: null, right: missingWrist, pose: null });
+    expect(hidden.phase).toBe('idle');
+    expect(hidden.committed).toBeNull();
+  });
+
+  it('splits two signs when the hand only slows down between them', () => {
+    const interpreter = new LiveInterpreter(classifier(0.95), {
+      startSpeed: 0.02,
+      stopSpeed: 0.004,
+      valleySpeed: 0.015,
+      valleyFrames: 3,
+      minFrames: 4,
+      earlyIntervalMs: 100_000,
+      earlyBoost: 0,
+      stopFrames: 12,
+    });
+    const texts: string[] = [];
+    const pushAt = (timeMs: number, x: number) => {
+      const snap = interpreter.push(frame(timeMs, x));
+      if (snap.committed) texts.push(snap.committed.text);
+    };
+    for (let i = 0; i < 8; i++) pushAt(i * 40, i * 0.05);
+    for (let i = 8; i < 11; i++) pushAt(i * 40, 0.35);
+    for (let i = 11; i < 19; i++) pushAt(i * 40, 0.35 + (i - 10) * 0.05);
+    for (let i = 19; i < 34; i++) pushAt(i * 40, 0.75);
+    expect(texts).toEqual(['apple', 'apple']);
   });
 });

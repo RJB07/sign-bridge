@@ -79,6 +79,7 @@ describe('landmark transformer', () => {
     expect(soft.label).toBe(sharp.label);
     expect(soft.confidence).toBeLessThanOrEqual(sharp.confidence + 1e-6);
     expect(modelFromJson(smoke).temperature).toBe(1);
+    expect(modelFromJson({ ...smoke, featureLayout: 'signer' }).featureLayout).toBe('signer');
   });
 
   it('decodes float16 weights and can score with one ensemble member', () => {

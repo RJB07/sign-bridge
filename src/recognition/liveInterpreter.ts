@@ -42,6 +42,10 @@ export type InterpreterOptions = {
   letterCooldownMs?: number;
   maxSegmentFrames?: number;
   previewIntervalMs?: number;
+  /** Wrist speed below this, for a few frames, is a boundary inside a sentence. */
+  valleySpeed?: number;
+  /** Consecutive slow frames that split a sentence when the hand speeds up again. */
+  valleyFrames?: number;
   letterPredict?: (landmarks: Landmark[]) => { label: string; confidence: number } | null;
   /** Landmark features. The shipped model uses the legacy 273-d vector. */
   features?: (frames: FeatureFrame[], forced?: HandSide | null) => number[][];
@@ -58,6 +62,8 @@ const DEFAULTS = {
   letterCooldownMs: 450,
   maxSegmentFrames: 75,
   previewIntervalMs: 120,
+  valleySpeed: 0.012,
+  valleyFrames: 3,
 };
 
 function wrist(frame: RawFrame, side: 'left' | 'right'): Landmark | null {
@@ -105,6 +111,7 @@ export class LiveInterpreter {
   private lastPreviewAt = -Infinity;
   private lastPreview: { label: string; confidence: number; top: LiveSnapshot['top'] } | null = null;
   private choices: LiveSnapshot['choices'] = [];
+  private valleyRun = 0;
 
   constructor(
     private readonly classifier: GlossClassifier,
@@ -131,6 +138,7 @@ export class LiveInterpreter {
     this.lastPreviewAt = -Infinity;
     this.lastPreview = null;
     this.choices = [];
+    this.valleyRun = 0;
   }
 
   push(frame: RawFrame): LiveSnapshot {
@@ -142,6 +150,28 @@ export class LiveInterpreter {
     let committed: Commit | null = null;
 
     if (this.waitForStill && (!present || speed < this.options.startSpeed)) this.waitForStill = false;
+    const dipFrames = this.valleyRun;
+    const inSegment = this.segmentStart !== null;
+    const fast = present && speed >= this.options.startSpeed && !this.waitForStill;
+    if (fast && inSegment && dipFrames >= this.options.valleyFrames && this.segmentStart !== null) {
+      const boundary = Math.max(this.segmentStart, this.frames.length - 1 - dipFrames);
+      if (!this.committedThisSegment && boundary - this.segmentStart >= this.options.minFrames) {
+        committed = this.commitGloss(this.segmentStart, boundary, this.classifier.emitThreshold);
+        if (!committed) {
+          const ranked = this.rank(this.segmentStart, boundary);
+          this.choices = ranked ? ranked.top.slice(0, 3) : [];
+        }
+      }
+      this.segmentStart = Math.max(0, this.frames.length - 2);
+      this.committedThisSegment = false;
+      this.lowMotion = 0;
+      this.valleyRun = 0;
+      this.lastPreview = null;
+    } else if (inSegment && (!present || speed < this.options.valleySpeed)) {
+      this.valleyRun = dipFrames + 1;
+    } else if (fast || !inSegment) {
+      this.valleyRun = 0;
+    }
     if (present && speed >= this.options.startSpeed && !this.waitForStill) {
       if (this.segmentStart === null) {
         this.segmentStart = Math.max(0, this.frames.length - 2);
@@ -171,6 +201,7 @@ export class LiveInterpreter {
         }
         this.segmentStart = null;
         this.lowMotion = 0;
+        this.valleyRun = 0;
         this.committedThisSegment = false;
         this.lastPreview = null;
       } else if (

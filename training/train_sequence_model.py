@@ -560,7 +560,7 @@ PREVIOUS_TEST_TOP1 = 0.5388
 
 
 def _layout_dim(layout: str) -> int:
-    if layout == "fine":
+    if layout in {"fine", "signer"}:
         return FINE_FEATURE_DIM
     if layout == "rich":
         return RICH_FEATURE_DIM
@@ -978,14 +978,14 @@ def main() -> None:
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--label-smoothing", type=float, default=0.05)
     parser.add_argument("--mixup", type=float, default=0.0)
-    parser.add_argument("--augment", choices=("base", "strong", "rich"), default="base")
+    parser.add_argument("--augment", choices=("base", "strong", "rich", "timed", "signer"), default="base")
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--seeds", default="0,1,2")
     parser.add_argument("--experiment", default="default")
     parser.add_argument("--skip-student", action="store_true")
     parser.add_argument("--resume", action="store_true", help="Continue finished seeds and in-progress epoch checkpoints under training/artifacts.")
     parser.add_argument("--no-preload", action="store_true", help="Read sequences from disk each step. Use this when the training cache does not fit in memory.")
-    parser.add_argument("--feature-layout", choices=("legacy", "rich", "fine"), default="legacy")
+    parser.add_argument("--feature-layout", choices=("legacy", "rich", "fine", "signer"), default="legacy")
     parser.add_argument("--seq-subdir", default="", help="Sequence folder under the cache. Defaults to seq-rich or seq.")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--lr-min", type=float, default=0.0)
@@ -1036,7 +1036,7 @@ def main() -> None:
     device = torch.device("cpu")
     torch.set_num_threads(os.cpu_count() or 4)
     feature_dim = _layout_dim(args.feature_layout)
-    default_seq = {"fine": "seq-fine", "rich": "seq-rich"}.get(args.feature_layout, "seq")
+    default_seq = {"signer": "seq-signer", "fine": "seq-fine", "rich": "seq-rich"}.get(args.feature_layout, "seq")
     seq_dir = cache / (args.seq_subdir or default_seq)
     counts = np.bincount([label_to_index[row["label"]] for row in splits["train"]], minlength=len(labels))
     class_weights = np.sqrt(counts.sum() / np.maximum(counts, 1) / len(labels)).astype(np.float32)
