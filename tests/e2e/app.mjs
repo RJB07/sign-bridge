@@ -94,6 +94,10 @@ try {
   page.setDefaultTimeout(45000);
   await page.goto(url, { waitUntil: 'networkidle0' });
   await page.waitForFunction(() => document.body.innerText.includes('English glosses'));
+  await page.waitForSelector('#framing-start');
+  await expectNoSeriousAxeViolations(page, 'framing');
+  await page.click('#framing-start');
+  await page.waitForFunction(() => !document.getElementById('framing-start'));
   const speechText = await page.evaluate(() => {
     const button = [...document.querySelectorAll('button')].find((node) => node.textContent?.includes('Speaking aloud'));
     return button?.textContent ?? '';

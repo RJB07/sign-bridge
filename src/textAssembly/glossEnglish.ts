@@ -11,6 +11,7 @@ const VERBS = new Set([
   'want', 'need', 'like', 'go', 'see', 'have', 'have to', 'give', 'make', 'find', 'read', 'sleep', 'stay', 'wait',
   'ride', 'jump', 'dance', 'cry', 'think', 'say', 'talk', 'look', 'listen', 'open', 'close', 'finish', 'touch',
   'taste', 'blow', 'cut', 'drop', 'hide', 'kiss', 'nap', 'wake', 'clean', 'drink', 'eat', 'can', 'will',
+  'understand', 'come',
 ]);
 const SUBJECT: Record<string, string> = {
   me: 'I',
@@ -54,6 +55,27 @@ function subjectOf(token: Token): string {
   return SUBJECT[token.key] ?? show(token);
 }
 
+function topicComment(body: Token[]): string | null {
+  if (body.length < 3 || SUBJECT[body[0].key] || WH.has(body[0].key) || !SUBJECT[body[1].key]) return null;
+  const subject = subjectOf(body[1]);
+  let verbAt = 2;
+  let negated = false;
+  if (body[2].key === 'not' && body[3] && VERBS.has(body[3].key)) {
+    negated = true;
+    verbAt = 3;
+  } else if (!VERBS.has(body[2].key)) {
+    return null;
+  }
+  const verb = body[verbAt].key;
+  const topic = body[0];
+  const rest = body.slice(verbAt + 1).map(show).join(' ');
+  const place = PLACES.has(topic.key) && (verb === 'go' || verb === 'come');
+  const object = place ? `to the ${show(topic)}` : show(topic);
+  const helper = negated ? (subject === 'he' || subject === 'she' || subject === 'it' ? 'does not' : 'do not') : '';
+  const tail = [object, rest].filter(Boolean).join(' ');
+  return helper ? `${subject} ${helper} ${verb} ${tail}` : `${subject} ${verb} ${tail}`;
+}
+
 function withTime(clause: string, question: boolean, times: string[]): string {
   if (times.length === 0) return punctuate(clause, question);
   const rest = clause.startsWith('I ') || clause.startsWith('I,') ? clause : `${clause.charAt(0).toLowerCase()}${clause.slice(1)}`;
@@ -95,6 +117,11 @@ export function glossesToEnglish(tokens: string[]): GlossEnglish {
   if (body.length >= 2 && body[0].key === 'name') {
     const name = body.slice(1).map(show).join(' ');
     return { english: withTime(`My name is ${name}`, false, times), glosses: glossLine, note: 'Name introduction.' };
+  }
+
+  const topic = topicComment(body);
+  if (topic) {
+    return { english: withTime(topic, false, times), glosses: glossLine, note: 'Topic moved after the comment.' };
   }
 
   const whIndex = body.findIndex((token) => WH.has(token.key));

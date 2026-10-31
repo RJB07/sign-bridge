@@ -16,6 +16,9 @@ import {
 import { publicUrl } from './publicUrl';
 import { glossesToEnglish } from './textAssembly/glossEnglish';
 import { QUICK_PHRASES, phraseInRecognizer } from './recognition/vocabularyGap';
+import { defaultCaptionSize } from './onboarding/captionSize';
+import { commitCue } from './onboarding/commitCue';
+import { FramingGuide } from './onboarding/FramingGuide';
 import { SignTextAssembler } from './textAssembly/SignTextAssembler';
 import { MediaPipeTracker } from './tracking/MediaPipeTracker';
 import { HearingChannel } from './reverseChannel/HearingChannel';
@@ -116,9 +119,20 @@ function App() {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
   const [textSize, setTextSize] = useState<'sm' | 'md' | 'lg' | 'xl'>(() => {
-    const saved = localStorage.getItem('signbridge-text');
-    if (saved === 'sm' || saved === 'md' || saved === 'lg' || saved === 'xl') return saved;
-    return 'lg';
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem('signbridge-text');
+    } catch {
+      saved = null;
+    }
+    return defaultCaptionSize(window.innerWidth, saved);
+  });
+  const [showFraming, setShowFraming] = useState(() => {
+    try {
+      return localStorage.getItem('signbridge-framing') !== 'seen';
+    } catch {
+      return true;
+    }
   });
   const [words, setWords] = useState<string[]>([]);
   const [spelling, setSpelling] = useState<string[]>([]);
@@ -296,6 +310,7 @@ function App() {
 
   useEffect(() => {
     if (!justAdded) return;
+    commitCue();
     const timer = window.setTimeout(() => setJustAdded(''), 900);
     return () => window.clearTimeout(timer);
   }, [justAdded]);
@@ -375,8 +390,19 @@ function App() {
   const handCount = trackingStatus.handsCount;
   const handStatus = handCount === 0 ? 'No hand' : handCount === 1 ? 'Hand seen' : 'Two hands';
 
+  const dismissFraming = () => {
+    try {
+      localStorage.setItem('signbridge-framing', 'seen');
+    } catch {
+      /* private mode still closes the guide */
+    }
+    setShowFraming(false);
+  };
+
   return (
     <div className="app-shell" data-theme={theme} data-text={textSize}>
+      {showFraming && <FramingGuide onDone={dismissFraming} />}
+      <div className="app-main" {...(showFraming ? { inert: true } : {})}>
       <a className="skip-link" href="#live-caption">Skip to captions</a>
       <header className="top-bar">
         <div>
@@ -664,6 +690,7 @@ function App() {
         </ul>
       </details>
       <p className="privacy-note">Camera video stays on this device and is not uploaded. Saved signs are landmark numbers in this browser only.</p>
+      </div>
     </div>
   );
 }

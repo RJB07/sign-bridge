@@ -1,5 +1,6 @@
 import type { ConversationMessage } from '../types/signbridge';
 import { glossesToEnglish } from './glossEnglish';
+import { correctSpelling } from './spellCorrect';
 
 export class SignTextAssembler {
   private currentWordBuffer: string[] = [];
@@ -50,7 +51,7 @@ export class SignTextAssembler {
     } else {
       // If we had buffered fingerspelled letters, flush them as a completed word
       if (this.currentWordBuffer.length > 0) {
-        this.fullPhraseBuffer.push(this.currentWordBuffer.join(''));
+        this.fullPhraseBuffer.push(correctSpelling(this.currentWordBuffer.join('')));
         this.currentWordBuffer = [];
       }
       this.fullPhraseBuffer.push(signText);
@@ -65,7 +66,7 @@ export class SignTextAssembler {
 
     // Word boundary flush for fingerspelling
     if (elapsed > this.wordPauseMs && this.currentWordBuffer.length > 0) {
-      this.fullPhraseBuffer.push(this.currentWordBuffer.join(''));
+      this.fullPhraseBuffer.push(correctSpelling(this.currentWordBuffer.join('')));
       this.currentWordBuffer = [];
       this.onPhraseUpdate(this.getCurrentPhraseText());
     }
@@ -116,7 +117,7 @@ export class SignTextAssembler {
 
   public commitLine(): void {
     if (this.currentWordBuffer.length > 0) {
-      this.fullPhraseBuffer.push(this.currentWordBuffer.join(''));
+      this.fullPhraseBuffer.push(correctSpelling(this.currentWordBuffer.join('')));
       this.currentWordBuffer = [];
     }
     if (this.fullPhraseBuffer.length === 0) return;

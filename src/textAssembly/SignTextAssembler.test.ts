@@ -37,7 +37,20 @@ describe('sign text assembler', () => {
     expect(phrase).toEqual(['CAT']);
     time = 5000;
     assembler.checkPauseBoundary();
-    expect(sentences).toEqual(['CAT.']);
+    expect(sentences).toEqual(['Cat.']);
+  });
+
+  it('corrects a finished fingerspelled word against the everyday list', () => {
+    const sentences: string[] = [];
+    let time = 0;
+    const assembler = new SignTextAssembler(() => undefined, (message) => sentences.push(message.text), () => time);
+    for (const letter of ['H', 'L', 'E', 'P']) {
+      time += 700;
+      assembler.pushSign(letter, 0.9);
+    }
+    time += 4000;
+    assembler.checkPauseBoundary();
+    expect(sentences).toEqual(['Help.']);
   });
 
   it('adds a question mark when the phrase ends with a wh-word', () => {

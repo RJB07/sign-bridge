@@ -27,7 +27,7 @@ That downloads `asl-signs` into `training/data/asl-signs` (gitignored), writes a
 - Command: `kaggle competitions download -c asl-fingerspelling`
 - License: treat it as CC BY 4.0, the same terms Google used for the ASL Signs competition, and confirm the data page before the first download.
 - What is in it: `train.csv` with `participant_id`, `sequence_id`, and a `phrase`; landmark files in wide format (`x_left_hand_0`, …) with many sequences per file. The archive is on the order of 200 GB. Some supplemental phrases were generated from addresses and URLs.
-- What it adds: signer ids, so a real signer-independent fingerspelling split, and the motion of J and Z instead of the single still frame in `sid220/asl-now-fingerspelling`. The current letter model’s 92.3% holdout is not signer-independent because those files have no participant id.
+- What it adds: signer ids, so a real signer-independent fingerspelling split, and the motion of J and Z instead of the single still frame in `sid220/asl-now-fingerspelling`. The current letter model’s 80.5% holdout keeps near-duplicate poses out of train, and it is still not signer-independent because those files have no participant id. The older filename-hash figure was 92.3%.
 - How to plug it in: slice the dominant-hand columns over time, train a short sequence model (the same transformer, or a small CTC model if the target is a whole phrase), and replace `public/models/asl-fingerspelling.json`. Keep the static MIT model only as a fallback.
 
 ## Not a Kaggle drop-in

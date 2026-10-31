@@ -28,7 +28,7 @@ jobs:
       - name: Python split and augmentation checks
         run: |
           python -m pip install --disable-pip-version-check numpy
-          PYTHONPATH=training python -m unittest training.test_augment training.test_splits training.test_asl_signs training.test_sources training.test_features_rich
+          PYTHONPATH=training python -m unittest training.test_augment training.test_splits training.test_asl_signs training.test_sources training.test_features_rich training.test_letter_split
 
       - name: Build
         run: npm run build

@@ -22,6 +22,16 @@ describe('gloss to English', () => {
     expect(glossesToEnglish(['water', 'please']).english).toBe('Water, please.');
   });
 
+  it('covers questions, negation, time, and topic-comment', () => {
+    expect(glossesToEnglish(['where', 'you', 'go']).english).toBe('Where do you go?');
+    expect(glossesToEnglish(['you', 'not', 'like', 'milk']).english).toBe('You do not like milk.');
+    expect(glossesToEnglish(['tomorrow', 'me', 'eat']).english).toBe('Tomorrow, I eat.');
+    expect(glossesToEnglish(['store', 'me', 'go']).english).toBe('I go to the store.');
+    expect(glossesToEnglish(['apple', 'me', 'want']).english).toBe('I want apple.');
+    expect(glossesToEnglish(['milk', 'me', 'not', 'want']).english).toBe('I do not want milk.');
+    expect(glossesToEnglish(['morning', 'store', 'me', 'go']).english).toBe('Morning, I go to the store.');
+  });
+
   it('leaves an unknown line close to the glosses', () => {
     const line = glossesToEnglish(['book', 'bird']);
     expect(line.english).toBe('Book bird.');

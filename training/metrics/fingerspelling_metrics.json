@@ -1,56 +1,64 @@
 {
   "task": "static ASL fingerspelling",
   "license": "MIT sid220/asl-now-fingerspelling",
-  "split": "filename-hash 80/10/10. Signer ids are not in this dataset, so this is NOT signer-independent.",
+  "split": "Near-duplicate groups stay in one split (palm-normalized distance 0.35). Signer ids are not in this dataset, so this is NOT a verified signer holdout. It does stop the same pose from sitting in train and test. The older filename-hash number was 92.3% and 47% of that test set had a near-copy in train.",
+  "signerIds": false,
+  "feature": "wrist-centered palm-scaled hand (63) plus five fingertip curls",
   "counts": {
-    "train": 1671,
-    "validation": 229,
-    "test": 222
+    "train": 1696,
+    "validation": 231,
+    "test": 195
   },
-  "testTop1": 0.9234,
+  "groups": {
+    "train": 968,
+    "validation": 118,
+    "test": 115
+  },
+  "validationTop1": 0.9177,
+  "testTop1": 0.8051,
   "chanceTop1": 0.0385,
   "perClassTest": [
     {
       "label": "A",
-      "support": 5,
-      "precision": 0.6667,
-      "recall": 0.8
+      "support": 4,
+      "precision": 0.3333,
+      "recall": 0.75
     },
     {
       "label": "B",
-      "support": 9,
+      "support": 1,
       "precision": 1.0,
-      "recall": 0.8889
+      "recall": 1.0
     },
     {
       "label": "C",
-      "support": 9,
-      "precision": 0.9,
+      "support": 7,
+      "precision": 1.0,
       "recall": 1.0
     },
     {
       "label": "D",
-      "support": 11,
-      "precision": 1.0,
-      "recall": 0.9091
+      "support": 4,
+      "precision": 0.75,
+      "recall": 0.75
     },
     {
       "label": "E",
-      "support": 5,
-      "precision": 0.8,
-      "recall": 0.8
+      "support": 1,
+      "precision": 1.0,
+      "recall": 1.0
     },
     {
       "label": "F",
-      "support": 5,
+      "support": 2,
       "precision": 1.0,
       "recall": 1.0
     },
     {
       "label": "G",
-      "support": 14,
+      "support": 17,
       "precision": 0.9333,
-      "recall": 1.0
+      "recall": 0.8235
     },
     {
       "label": "H",
@@ -60,123 +68,123 @@
     },
     {
       "label": "I",
-      "support": 8,
-      "precision": 1.0,
-      "recall": 0.875
+      "support": 0,
+      "precision": 0.0,
+      "recall": 0.0
     },
     {
       "label": "J",
-      "support": 11,
-      "precision": 1.0,
-      "recall": 0.9091
-    },
-    {
-      "label": "K",
       "support": 6,
-      "precision": 1.0,
+      "precision": 0.8571,
       "recall": 1.0
     },
     {
+      "label": "K",
+      "support": 2,
+      "precision": 1.0,
+      "recall": 0.5
+    },
+    {
       "label": "L",
-      "support": 10,
-      "precision": 0.9091,
+      "support": 3,
+      "precision": 0.6,
       "recall": 1.0
     },
     {
       "label": "M",
-      "support": 13,
-      "precision": 0.8571,
-      "recall": 0.9231
+      "support": 10,
+      "precision": 0.75,
+      "recall": 0.9
     },
     {
       "label": "N",
-      "support": 7,
+      "support": 1,
       "precision": 1.0,
-      "recall": 0.8571
+      "recall": 1.0
     },
     {
       "label": "O",
-      "support": 7,
-      "precision": 0.8571,
-      "recall": 0.8571
+      "support": 11,
+      "precision": 0.9091,
+      "recall": 0.9091
     },
     {
       "label": "P",
-      "support": 9,
-      "precision": 1.0,
+      "support": 4,
+      "precision": 0.8,
       "recall": 1.0
     },
     {
       "label": "Q",
-      "support": 5,
-      "precision": 1.0,
+      "support": 4,
+      "precision": 0.8,
       "recall": 1.0
     },
     {
       "label": "R",
-      "support": 10,
-      "precision": 0.875,
-      "recall": 0.7
+      "support": 9,
+      "precision": 0.5,
+      "recall": 0.4444
     },
     {
       "label": "S",
-      "support": 13,
-      "precision": 0.9167,
-      "recall": 0.8462
+      "support": 22,
+      "precision": 0.9333,
+      "recall": 0.6364
     },
     {
       "label": "T",
-      "support": 4,
+      "support": 2,
       "precision": 1.0,
       "recall": 1.0
     },
     {
       "label": "U",
-      "support": 13,
-      "precision": 1.0,
-      "recall": 1.0
+      "support": 23,
+      "precision": 0.6364,
+      "recall": 0.913
     },
     {
       "label": "V",
-      "support": 5,
-      "precision": 0.6667,
-      "recall": 0.8
+      "support": 19,
+      "precision": 0.8182,
+      "recall": 0.4737
     },
     {
       "label": "W",
-      "support": 6,
+      "support": 3,
       "precision": 1.0,
       "recall": 1.0
     },
     {
       "label": "X",
-      "support": 10,
-      "precision": 0.9,
-      "recall": 0.9
+      "support": 14,
+      "precision": 0.9231,
+      "recall": 0.8571
     },
     {
       "label": "Y",
-      "support": 8,
-      "precision": 0.875,
-      "recall": 0.875
+      "support": 4,
+      "precision": 1.0,
+      "recall": 0.5
     },
     {
       "label": "Z",
-      "support": 10,
-      "precision": 0.8333,
-      "recall": 1.0
+      "support": 13,
+      "precision": 1.0,
+      "recall": 0.9231
     }
   ],
   "j": {
     "label": "J",
-    "support": 11,
-    "precision": 1.0,
-    "recall": 0.9091
+    "support": 6,
+    "precision": 0.8571,
+    "recall": 1.0
   },
   "z": {
     "label": "Z",
-    "support": 10,
-    "precision": 0.8333,
-    "recall": 1.0
+    "support": 13,
+    "precision": 1.0,
+    "recall": 0.9231
   }
 }
