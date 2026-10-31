@@ -124,19 +124,75 @@ function tensor(blob: WeightBlob, name: string): { data: Float32Array; shape: nu
   return value;
 }
 
-function linear(x: Float32Array, rows: number, cols: number, weight: Float32Array, bias: Float32Array): Float32Array {
-  const out = new Float32Array(rows * weight.length / cols);
-  const outCols = weight.length / cols;
+function linearScalar(x: Float32Array, rows: number, cols: number, weight: Float32Array, bias: Float32Array, out: Float32Array, outCols: number): void {
   for (let r = 0; r < rows; r++) {
+    const xRow = r * cols;
     for (let c = 0; c < outCols; c++) {
       let sum = bias[c];
       const wRow = c * cols;
-      const xRow = r * cols;
+      for (let k = 0; k < cols; k++) sum += x[xRow + k] * weight[wRow + k];
+      out[r * outCols + c] = sum;
+    }
+  }
+}
+
+/** Four outputs share each input load. Same math as the scalar loop, aside from one ulp. */
+function linearBlocked(x: Float32Array, rows: number, cols: number, weight: Float32Array, bias: Float32Array): Float32Array {
+  const outCols = weight.length / cols;
+  const out = new Float32Array(rows * outCols);
+  if (rows < 8 || cols < 64 || outCols < 8) {
+    linearScalar(x, rows, cols, weight, bias, out, outCols);
+    return out;
+  }
+  const tail = cols & ~3;
+  for (let r = 0; r < rows; r++) {
+    const xRow = r * cols;
+    let c = 0;
+    for (; c + 3 < outCols; c += 4) {
+      let s0 = bias[c];
+      let s1 = bias[c + 1];
+      let s2 = bias[c + 2];
+      let s3 = bias[c + 3];
+      const w0 = c * cols;
+      const w1 = w0 + cols;
+      const w2 = w1 + cols;
+      const w3 = w2 + cols;
+      let k = 0;
+      for (; k < tail; k += 4) {
+        const x0 = x[xRow + k];
+        const x1 = x[xRow + k + 1];
+        const x2 = x[xRow + k + 2];
+        const x3 = x[xRow + k + 3];
+        s0 += x0 * weight[w0 + k] + x1 * weight[w0 + k + 1] + x2 * weight[w0 + k + 2] + x3 * weight[w0 + k + 3];
+        s1 += x0 * weight[w1 + k] + x1 * weight[w1 + k + 1] + x2 * weight[w1 + k + 2] + x3 * weight[w1 + k + 3];
+        s2 += x0 * weight[w2 + k] + x1 * weight[w2 + k + 1] + x2 * weight[w2 + k + 2] + x3 * weight[w2 + k + 3];
+        s3 += x0 * weight[w3 + k] + x1 * weight[w3 + k + 1] + x2 * weight[w3 + k + 2] + x3 * weight[w3 + k + 3];
+      }
+      for (; k < cols; k++) {
+        const xv = x[xRow + k];
+        s0 += xv * weight[w0 + k];
+        s1 += xv * weight[w1 + k];
+        s2 += xv * weight[w2 + k];
+        s3 += xv * weight[w3 + k];
+      }
+      const base = r * outCols + c;
+      out[base] = s0;
+      out[base + 1] = s1;
+      out[base + 2] = s2;
+      out[base + 3] = s3;
+    }
+    for (; c < outCols; c++) {
+      let sum = bias[c];
+      const wRow = c * cols;
       for (let k = 0; k < cols; k++) sum += x[xRow + k] * weight[wRow + k];
       out[r * outCols + c] = sum;
     }
   }
   return out;
+}
+
+function linear(x: Float32Array, rows: number, cols: number, weight: Float32Array, bias: Float32Array): Float32Array {
+  return linearBlocked(x, rows, cols, weight, bias);
 }
 
 function layerNorm(x: Float32Array, rows: number, cols: number, weight: Float32Array, bias: Float32Array): Float32Array {
