@@ -1,526 +1,699 @@
 import { useEffect, useRef, useState } from 'react';
-import { MediaPipeTracker } from './tracking/MediaPipeTracker';
+import { ASL_ENGLISH_PACK } from './languages/aslEnglish';
+import { LiveInterpreter, type LiveSnapshot } from './recognition/liveInterpreter';
+import { assessFrame } from './recognition/frameQuality';
+import { letterModelFromJson, predictLetter } from './recognition/letterModel';
+import { sequenceFeatures, sequenceFeaturesFine, sequenceFeaturesRich, sequenceFeaturesSigner } from './recognition/features';
+import { decodeF32, glossToEnglish, modelFromJson, predictPrepared, predictSequence, type Prediction, type SequenceModel } from './recognition/sequenceModel';
+import type { FeatureFrame, HandSide } from './recognition/features';
+import {
+  applyPersonalLabel,
+  loadPersonalSamples,
+  persistPersonalSamples,
+  sampleFromSequence,
+  type PersonalSample,
+} from './personalize/personalSigns';
+import { publicUrl } from './publicUrl';
+import { glossesToEnglish } from './textAssembly/glossEnglish';
+import { QUICK_PHRASES, phraseInRecognizer } from './recognition/vocabularyGap';
+import { defaultCaptionSize } from './onboarding/captionSize';
+import { commitCue } from './onboarding/commitCue';
+import { FramingGuide } from './onboarding/FramingGuide';
 import { SignTextAssembler } from './textAssembly/SignTextAssembler';
+import { MediaPipeTracker } from './tracking/MediaPipeTracker';
 import { HearingChannel } from './reverseChannel/HearingChannel';
-import { SignLanguageMatcher } from './recognition/SignLanguageMatcher';
-import { OPEN_ASL_DICTIONARY } from './aslDictionary';
-import { exportDatasetJSON, parseImportedDatasetJSON, type SignDataset } from './signModel';
-import { loadSavedDataset, saveDataset } from './storage';
-import type { ConversationMessage, FrameLandmarksData, HeadGestureType, TrackingStatus } from './types/signbridge';
+import type { ConversationMessage, FrameLandmarksData, TrackingStatus } from './types/signbridge';
+
+type DemoClip = { label: string; features: string; signerFeatures?: string };
+
+function layoutsOf(model: SequenceModel): Set<string> {
+  return new Set(model.members.map((member) => member.featureLayout ?? model.featureLayout));
+}
+
+function classifierFor(
+  model: SequenceModel,
+  personal: () => PersonalSample[],
+  rememberSequence: (sequence: number[][]) => void,
+  onPersonal: (active: boolean) => void,
+  hand: () => HandSide | null,
+) {
+  const withPersonal = (sequence: number[][], prediction: Prediction) => {
+    const next = applyPersonalLabel(prediction, sequence, personal());
+    onPersonal(next !== prediction);
+    return next;
+  };
+  return {
+    labels: model.labels,
+    emitThreshold: model.emitThreshold,
+    marginThreshold: model.marginThreshold,
+    classThresholds: model.classThresholds,
+    predict: (sequence: number[][]) => {
+      rememberSequence(sequence);
+      return withPersonal(sequence, predictSequence(model, sequence));
+    },
+    predictPreview: (sequence: number[][]) => withPersonal(sequence, predictSequence(model, sequence, { members: 1, tta: false })),
+    predictFrames: layoutsOf(model).size > 1
+      ? (frames: FeatureFrame[], preview: boolean) => {
+          const fine = sequenceFeaturesFine(frames, hand());
+          const signer = sequenceFeaturesSigner(frames, hand());
+          if (!preview && fine.length > 0) rememberSequence(fine);
+          const sequence = fine.length > 0 ? fine : signer;
+          return withPersonal(sequence, predictPrepared(model, { fine, signer }, preview ? { members: 1, tta: false } : {}));
+        }
+      : undefined,
+  };
+}
 
 function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const assemblerRef = useRef<SignTextAssembler | null>(null);
+  const hearingRef = useRef<HearingChannel | null>(null);
+  const interpreterRef = useRef<LiveInterpreter | null>(null);
+  const demoClipsRef = useRef<DemoClip[]>([]);
+  const demoIndexRef = useRef(0);
+  const featureDimRef = useRef(273);
+  const modelRef = useRef<SequenceModel | null>(null);
+  const forcedHandRef = useRef<HandSide | null>(null);
+  const letterPredictRef = useRef<((landmarks: import('./recognition/features').Landmark[]) => { label: string; confidence: number } | null) | null>(null);
+  const uiStampRef = useRef(0);
 
-  // Tracking Telemetry State (Layer 1) & Google DeepMind SL2T Options
-  const [fps, setFps] = useState<number>(0);
-  const [headGesture, setHeadGesture] = useState<HeadGestureType>('NONE');
-  const [signerHandedness, setSignerHandedness] = useState<'AUTO' | 'LEFT' | 'RIGHT'>('AUTO');
-  const [isOneHandedMode, setIsOneHandedMode] = useState<boolean>(false);
-  const [isPrivacyMode] = useState<boolean>(true); // DeepMind SL2T: Landmark coordinate streaming only
-
+  const [fps, setFps] = useState(0);
+  const [forcedHand, setForcedHand] = useState<'AUTO' | 'LEFT' | 'RIGHT'>('AUTO');
   const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>({
     cameraActive: false,
     permissionGranted: false,
     handsCount: 0,
-    faceDetected: false,
-    headGesture: 'NONE',
-    message: 'Initializing Google DeepMind SL2T & MediaPipe Vision...',
-    isPrivacyMode: true,
-    signerHandedness: 'AUTO',
-    isOneHandedMode: false,
+    poseDetected: false,
+    message: 'Loading the on-device ASL model…',
     errorCode: 'NONE',
   });
-
-  // Layer 2 & 3 Recognition & Text Assembly State
-  const [predictedSign, setPredictedSign] = useState<string>('Waiting for hand...');
-  const [matchConfidence, setMatchConfidence] = useState<number>(0);
+  const [predictedSign, setPredictedSign] = useState('Loading model…');
+  const [matchConfidence, setMatchConfidence] = useState(0);
+  const [topGuesses, setTopGuesses] = useState<string>('');
+  const [choices, setChoices] = useState<Array<{ label: string; probability: number }>>([]);
+  const [frameHint, setFrameHint] = useState('Sign one word, then pause. Keep the whole hand in frame.');
+  const [phase, setPhase] = useState<LiveSnapshot['phase']>('idle');
   const [currentPhrase, setCurrentPhrase] = useState<string[]>([]);
-  const [activeGrammarRule, setActiveGrammarRule] = useState<string>('Rule #8: SVO Standard');
-
-  // Layer 4 & 5 Unified 2-Way Conversation Stream
+  const [modelLabels, setModelLabels] = useState<string[]>([]);
+  const [modelSummary, setModelSummary] = useState('Model not loaded');
   const [conversation, setConversation] = useState<ConversationMessage[]>([
     {
-      id: 'welcome-1',
+      id: 'welcome',
       sender: 'SIGNER',
-      text: 'SignBridge Google DeepMind SL2T Active. Perform ASL gestures to translate live.',
+      text: 'Sign a gloss. SignBridge keeps the gloss and writes a short English sentence on this device.',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      grammarRuleApplied: 'DeepMind SL2T Benchmark Active',
     },
   ]);
-
-  // Layer 5 Reverse Channel State
-  const [speechEnabled, setSpeechEnabled] = useState(true);
+  const [speechEnabled, setSpeechEnabled] = useState(() => {
+    try {
+      return localStorage.getItem('signbridge-speech') === 'on';
+    } catch {
+      return false;
+    }
+  });
+  const [theme, setTheme] = useState<'light' | 'dark' | 'contrast'>(() => {
+    const saved = localStorage.getItem('signbridge-theme');
+    if (saved === 'light' || saved === 'dark' || saved === 'contrast') return saved;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+  const [textSize, setTextSize] = useState<'sm' | 'md' | 'lg' | 'xl'>(() => {
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem('signbridge-text');
+    } catch {
+      saved = null;
+    }
+    return defaultCaptionSize(window.innerWidth, saved);
+  });
+  const [showFraming, setShowFraming] = useState(() => {
+    try {
+      return localStorage.getItem('signbridge-framing') !== 'seen';
+    } catch {
+      return true;
+    }
+  });
+  const [words, setWords] = useState<string[]>([]);
+  const [spelling, setSpelling] = useState<string[]>([]);
+  const [justAdded, setJustAdded] = useState('');
   const [isMicListening, setIsMicListening] = useState(false);
   const [interimHearingText, setInterimHearingText] = useState('');
   const [typedReplyText, setTypedReplyText] = useState('');
-
-  // Dictionary & Book Source Filters
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
-  const [selectedBookSource, setSelectedBookSource] = useState<string>('ALL');
-  const [dataset, setDataset] = useState<SignDataset>(() => loadSavedDataset());
+  const [sttNote, setSttNote] = useState('');
+  const [personalSamples, setPersonalSamples] = useState<PersonalSample[]>(() => loadPersonalSamples());
+  const [personalLabel, setPersonalLabel] = useState('');
+  const [personalMessage, setPersonalMessage] = useState('Sign or replay a sample, then save it here.');
+  const [personalHit, setPersonalHit] = useState(false);
+  const personalRef = useRef<PersonalSample[]>([]);
+  const lastSequenceRef = useRef<number[][] | null>(null);
+  personalRef.current = personalSamples;
 
-  // Class Instances Refs
-  const trackerRef = useRef<MediaPipeTracker | null>(null);
-  const assemblerRef = useRef<SignTextAssembler | null>(null);
-  const hearingChannelRef = useRef<HearingChannel | null>(null);
-  const lastSpokenRef = useRef<string>('');
+  const speechRef = useRef(speechEnabled);
+  speechRef.current = speechEnabled;
 
-  // Sanitize TTS text so single uppercase letters (e.g. 'A', 'B') are spoken directly as 'a', 'b' without saying 'Capital A', while preserving pronoun 'I'
-  const formatTextForSpeech = (text: string): string => {
-    if (!text) return '';
-    const trimmed = text.trim();
-    if (/^[A-Z]$/.test(trimmed)) {
-      return trimmed.toLowerCase();
-    }
-    return text.replace(/\b([A-HJ-Z])\b/g, (_, letter) => letter.toLowerCase());
-  };
-
-
-
-  // Real-time Text-to-Speech engine for Signer -> Hearing
-  const speakWord = (word: string) => {
-    if (!speechEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    if (!word || word === 'Waiting for hand...' || word === 'No hand detected' || word === 'Unknown' || word === 'Translating...') return;
-    if (lastSpokenRef.current === word) return;
-
-    lastSpokenRef.current = word;
+  const speak = (text: string) => {
+    if (!speechRef.current || !text || !('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
-
-    const spokenText = formatTextForSpeech(word);
-    const utterance = new SpeechSynthesisUtterance(spokenText);
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
     window.speechSynthesis.speak(utterance);
   };
 
-  const speakPhrase = (phraseText: string) => {
-    if (!speechEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-
-    const spokenText = formatTextForSpeech(phraseText);
-    const utterance = new SpeechSynthesisUtterance(spokenText);
-    window.speechSynthesis.speak(utterance);
-  };
-
-
-  // Initialize Layer 3 Assembler & Layer 5 Reverse Channel
   useEffect(() => {
     assemblerRef.current = new SignTextAssembler(
-      (phrase: string[]) => setCurrentPhrase(phrase),
-      (message: ConversationMessage) => {
-        setConversation((prev) => [...prev, message]);
-        if (message.grammarRuleApplied) {
-          setActiveGrammarRule(message.grammarRuleApplied);
-        }
-        speakPhrase(message.text);
-      }
-    );
-
-    hearingChannelRef.current = new HearingChannel(
-      (message: ConversationMessage) => {
-        setConversation((prev) => [...prev, message]);
+      () => {
+        const assembler = assemblerRef.current;
+        if (!assembler) return;
+        setWords(assembler.getWords());
+        setSpelling(assembler.getSpelling());
+        setCurrentPhrase(assembler.getCurrentPhraseText());
       },
-      (listening: boolean, interim?: string) => {
+      (message) => {
+        setConversation((prev) => [...prev, message]);
+        speak(message.text);
+      },
+    );
+    hearingRef.current = new HearingChannel(
+      (message) => setConversation((prev) => [...prev, message]),
+      (listening, interim) => {
         setIsMicListening(listening);
         setInterimHearingText(interim || '');
-      }
+      },
     );
-  }, [speechEnabled]);
+  }, []);
 
-  // Initialize Layer 1 Tracking & S-Tier Visual Feature Matcher
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [modelResponse, demoResponse, letterResponse] = await Promise.all([
+          fetch(publicUrl(ASL_ENGLISH_PACK.modelUrl)),
+          fetch(publicUrl('/models/demo-clips.json')),
+          fetch(publicUrl('/models/asl-fingerspelling.json')),
+        ]);
+        if (!modelResponse.ok) throw new Error(`model HTTP ${modelResponse.status}`);
+        const payload = await modelResponse.json();
+        const model = modelFromJson(payload);
+        if (cancelled) return;
+        featureDimRef.current = model.featureDim;
+        modelRef.current = model;
+        if (letterResponse.ok) {
+          const letters = letterModelFromJson(await letterResponse.json());
+          letterPredictRef.current = (hand) => predictLetter(letters, hand);
+        }
+        interpreterRef.current = new LiveInterpreter(classifierFor(model, () => personalRef.current, (sequence) => {
+          lastSequenceRef.current = sequence;
+        }, setPersonalHit, () => forcedHandRef.current), {
+          letterPredict: (hand) => letterPredictRef.current?.(hand) ?? null,
+          features: model.featureLayout === 'signer'
+            ? sequenceFeaturesSigner
+            : model.featureLayout === 'fine'
+              ? sequenceFeaturesFine
+              : model.featureLayout === 'rich'
+                ? sequenceFeaturesRich
+                : sequenceFeatures,
+        });
+        setModelLabels(model.labels.map(glossToEnglish));
+        if (payload.metrics) {
+          const metrics = payload.metrics;
+          setModelSummary(
+            `${metrics.classes} English glosses · test top-1 ${(metrics.testTop1 * 100).toFixed(1)}% · top-5 ${(metrics.testTop5 * 100).toFixed(1)}%`,
+          );
+        }
+        if (demoResponse.ok) {
+          const demo = await demoResponse.json();
+          demoClipsRef.current = demo.clips ?? [];
+        }
+        setPredictedSign('Show a sign');
+        setTrackingStatus((prev) => ({ ...prev, message: 'Model ready. Allow the camera, or replay a held-out sign.' }));
+      } catch (error) {
+        if (cancelled) return;
+        setPredictedSign('Model unavailable');
+        setTrackingStatus((prev) => ({
+          ...prev,
+          message: `Could not load the ASL model (${error}).`,
+          errorCode: 'MODEL_LOAD_ERROR',
+        }));
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     if (!videoRef.current || !canvasRef.current) return;
-
+    const applySnapshot = (snap: LiveSnapshot) => {
+      setPhase(snap.phase);
+      if (snap.committed) {
+        setPredictedSign(snap.committed.text);
+        setMatchConfidence(snap.committed.confidence * 100);
+        assemblerRef.current?.pushSign(snap.committed.text, snap.committed.confidence);
+        setJustAdded(snap.committed.text);
+      } else if (snap.candidate) {
+        setPredictedSign(snap.candidate);
+        setMatchConfidence(snap.confidence * 100);
+      } else if (snap.phase === 'signing') {
+        setPredictedSign('Signing…');
+      }
+      if (snap.top.length > 0) {
+        setTopGuesses(snap.top.map((item) => `${item.label} ${(item.probability * 100).toFixed(0)}%`).join(' · '));
+      }
+      setChoices(snap.choices);
+    };
     const onFrame = (data: FrameLandmarksData) => {
       setFps(data.fps);
-      setHeadGesture(data.headGesture);
-
-      if (data.hands && data.hands.length > 0) {
-        const primaryHand = data.hands[0];
-        const match = SignLanguageMatcher.match(primaryHand, data.headGesture);
-
-        const rawSign = match.confidence > 75 ? match.label : 'Translating...';
-        const displaySign = typeof rawSign === 'string'
-          ? rawSign.replace(/\s*\(.*\)/, '').split('/')[0].trim()
-          : rawSign;
-
-        setPredictedSign(displaySign);
-        setMatchConfidence(match.confidence);
-
-        if (match.confidence > 75) {
-          speakWord(displaySign);
-          assemblerRef.current?.pushSign(displaySign, match.confidence);
-        }
-      } else {
-        setPredictedSign('No hand detected');
-        setMatchConfidence(0);
-        assemblerRef.current?.checkPauseBoundary();
+      setFrameHint(assessFrame({
+        leftHand: data.leftHand,
+        rightHand: data.rightHand,
+        poseDetected: Boolean(data.pose),
+      }).message);
+      const interpreter = interpreterRef.current;
+      if (!interpreter) return;
+      const snap = interpreter.push({
+        timeMs: data.timestamp,
+        left: data.leftHand,
+        right: data.rightHand,
+        pose: data.pose,
+        lips: data.lips ?? null,
+      });
+      const now = performance.now();
+      if (snap.committed || now - uiStampRef.current > 150) {
+        uiStampRef.current = now;
+        applySnapshot(snap);
       }
     };
-
-    const onStatus = (status: TrackingStatus) => {
-      setTrackingStatus({
-        ...status,
-        isPrivacyMode,
-        signerHandedness,
-        isOneHandedMode,
-      });
-    };
-
-    trackerRef.current = new MediaPipeTracker(
-      videoRef.current,
-      canvasRef.current,
-      onFrame,
-      onStatus
-    );
-
-    trackerRef.current.start();
-
-    return () => {
-      trackerRef.current?.stop();
-    };
-  }, [isPrivacyMode, signerHandedness, isOneHandedMode]);
-
-  // Auto-scroll conversation chat log
-  useEffect(() => {
-    chatScrollRef.current?.scrollTo({
-      top: chatScrollRef.current.scrollHeight,
-      behavior: 'smooth',
+    const tracker = new MediaPipeTracker(videoRef.current, canvasRef.current, onFrame, (status) => {
+      setTrackingStatus((prev) => (
+        prev.cameraActive === status.cameraActive
+        && prev.permissionGranted === status.permissionGranted
+        && prev.handsCount === status.handsCount
+        && prev.poseDetected === status.poseDetected
+        && prev.message === status.message
+        && prev.errorCode === status.errorCode
+          ? prev
+          : status
+      ));
     });
-  }, [conversation, interimHearingText]);
+    tracker.start();
+    return () => tracker.stop();
+  }, []);
 
-  // Hearing Person Reply Handlers
-  const handleToggleMic = () => {
-    hearingChannelRef.current?.toggleMicrophone();
+  useEffect(() => {
+    const hand = forcedHand === 'LEFT' ? 'Left' : forcedHand === 'RIGHT' ? 'Right' : null;
+    forcedHandRef.current = hand;
+    interpreterRef.current?.setForcedHand(hand);
+  }, [forcedHand]);
+
+  useEffect(() => {
+    if (!justAdded) return;
+    commitCue();
+    const timer = window.setTimeout(() => setJustAdded(''), 900);
+    return () => window.clearTimeout(timer);
+  }, [justAdded]);
+
+  useEffect(() => {
+    localStorage.setItem('signbridge-theme', theme);
+    localStorage.setItem('signbridge-text', textSize);
+    localStorage.setItem('signbridge-speech', speechEnabled ? 'on' : 'off');
+  }, [theme, textSize, speechEnabled]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea')) return;
+      const undoKey = event.key === 'Backspace' || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z');
+      if (!undoKey) return;
+      event.preventDefault();
+      assemblerRef.current?.undo();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const replayHeldOut = () => {
+    const interpreter = interpreterRef.current;
+    const clips = demoClipsRef.current;
+    if (!interpreter || clips.length === 0) return;
+    const clip = clips[demoIndexRef.current % clips.length];
+    demoIndexRef.current += 1;
+    const dim = featureDimRef.current;
+    const rows = (encoded: string) => {
+      const flat = decodeF32(encoded);
+      const sequence: number[][] = [];
+      for (let t = 0; t < flat.length / dim; t++) sequence.push(Array.from(flat.slice(t * dim, (t + 1) * dim)));
+      return sequence;
+    };
+    const fine = rows(clip.features);
+    const signer = clip.signerFeatures ? rows(clip.signerFeatures) : fine;
+    const model = modelRef.current;
+    const prediction = model ? predictPrepared(model, { fine, signer }) : null;
+    const result = prediction
+      ? { label: glossToEnglish(prediction.label), confidence: prediction.confidence, margin: prediction.margin }
+      : interpreter.classifyPrepared(fine);
+    lastSequenceRef.current = fine;
+    setPredictedSign(result.label);
+    setMatchConfidence(result.confidence * 100);
+    setPhase('idle');
+    setTopGuesses('');
+    setJustAdded(result.label);
+    assemblerRef.current?.pushSign(result.label, result.confidence);
   };
 
-  const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
-
-  const runMockTest = async () => {
-    setConversation((prev) => [
-      ...prev,
-      {
-        id: 'mock-start-' + Date.now().toString(36),
-        sender: 'HEARING',
-        text: 'Running SL2T ASL Test: "Yesterday we went to the store."',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        grammarRuleApplied: 'Rule #2: Time-First Tense',
-      },
-    ]);
-
-    const seq: Array<{ sign: string; delay: number }> = [
-      { sign: 'Yesterday', delay: 0 },
-      { sign: 'we', delay: 700 },
-      { sign: 'go', delay: 700 },
-      { sign: 'to', delay: 500 },
-      { sign: 'store', delay: 700 },
-    ];
-
-    for (const item of seq) {
-      await sleep(item.delay);
-      assemblerRef.current?.pushSign(item.sign, 96);
-      setPredictedSign(item.sign);
-      setMatchConfidence(96);
-    }
-
-    await sleep(2000);
-    assemblerRef.current?.checkPauseBoundary();
-  };
-
-  const handleSendTypedReply = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!typedReplyText.trim()) return;
-    hearingChannelRef.current?.sendTypedReply(typedReplyText);
-    setTypedReplyText('');
-  };
-
-  // Free Dataset JSON Export & Import
-  const handleExportDataset = () => {
-    if (dataset.length === 0) {
-      alert('No recorded dataset samples to export. Record or capture some samples first!');
+  const previewTokens = spelling.length > 0 ? [...words, spelling.join('')] : words;
+  const englishPreview = glossesToEnglish(previewTokens);
+  const saveLastSign = () => {
+    const sequence = lastSequenceRef.current;
+    const label = personalLabel.trim() || (predictedSign !== 'Show a sign' && predictedSign !== 'Loading model…' ? predictedSign.trim() : '');
+    if (!sequence || sequence.length === 0 || !label) {
+      setPersonalMessage('Sign or replay a sample, and give it a label.');
       return;
     }
-    exportDatasetJSON(dataset);
+    const next = [...personalSamples, sampleFromSequence(label, sequence)].slice(-40);
+    personalRef.current = next;
+    setPersonalSamples(next);
+    persistPersonalSamples(next);
+    setPersonalMessage(`Saved “${label}” in this browser. It is not uploaded.`);
   };
-
-  const handleImportJSONClick = () => {
-    fileInputRef.current?.click();
+  const removePersonal = (id: string) => {
+    const next = personalSamples.filter((sample) => sample.id !== id);
+    personalRef.current = next;
+    setPersonalSamples(next);
+    persistPersonalSamples(next);
   };
+  const filtered = modelLabels.filter((label) => label.toLowerCase().includes(searchQuery.toLowerCase()));
+  const latestHearing = [...conversation].reverse().find((message) => message.sender === 'HEARING');
+  const hearingNow = interimHearingText || latestHearing?.text || '';
+  const handCount = trackingStatus.handsCount;
+  const handStatus = handCount === 0 ? 'No hand' : handCount === 1 ? 'Hand seen' : 'Two hands';
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      const imported = parseImportedDatasetJSON(content);
-      if (imported.length > 0) {
-        const merged = [...dataset, ...imported];
-        setDataset(merged);
-        saveDataset(merged);
-        alert(`Successfully imported ${imported.length} gesture samples into dataset!`);
-      } else {
-        alert('Invalid dataset JSON file format.');
-      }
-    };
-    reader.readAsText(file);
+  const dismissFraming = () => {
+    try {
+      localStorage.setItem('signbridge-framing', 'seen');
+    } catch {
+      /* private mode still closes the guide */
+    }
+    setShowFraming(false);
   };
-
-  // Filter ASL Dictionary Entries
-  const filteredDictionary = OPEN_ASL_DICTIONARY.filter((item) => {
-    const matchesCategory = selectedCategory === 'ALL' || item.category === selectedCategory;
-    const matchesBook = selectedBookSource === 'ALL' || item.bookSource === selectedBookSource;
-    if (!matchesCategory || !matchesBook) return false;
-
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      item.label.toLowerCase().includes(q) ||
-      item.category.toLowerCase().includes(q) ||
-      item.bookSource.toLowerCase().includes(q) ||
-      item.description.toLowerCase().includes(q)
-    );
-  });
 
   return (
-    <div className="app-shell">
-      {/* Hidden Dataset File Input */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        accept=".json"
-        style={{ display: 'none' }}
-        onChange={handleFileChange}
-      />
+    <div className="app-shell" data-theme={theme} data-text={textSize}>
+      {showFraming && <FramingGuide onDone={dismissFraming} />}
+      <div className="app-main" {...(showFraming ? { inert: true } : {})}>
+      <a className="skip-link" href="#live-caption">Skip to captions</a>
+      <header className="top-bar">
+        <div>
+          <h1>SignBridge</h1>
+          <p>ASL to English, on this device. You do not need sound.</p>
+        </div>
+        <div className="top-controls" role="toolbar" aria-label="Display settings">
+          <div className="control-group" role="group" aria-label="Caption size">
+            {(['sm', 'md', 'lg', 'xl'] as const).map((size) => (
+              <button key={size} type="button" aria-pressed={textSize === size} className={textSize === size ? 'is-on' : ''} onClick={() => setTextSize(size)}>
+                {size === 'sm' ? 'A' : size === 'md' ? 'A+' : size === 'lg' ? 'A++' : 'A+++'}
+              </button>
+            ))}
+          </div>
+          <div className="control-group" role="group" aria-label="Theme">
+            {([
+              ['light', 'Light'],
+              ['dark', 'Dark'],
+              ['contrast', 'Contrast'],
+            ] as const).map(([id, label]) => (
+              <button key={id} type="button" aria-pressed={theme === id} className={theme === id ? 'is-on' : ''} onClick={() => setTheme(id)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className={speechEnabled ? 'is-on' : ''}
+            aria-pressed={speechEnabled}
+            onClick={() => setSpeechEnabled(!speechEnabled)}
+          >
+            {speechEnabled ? 'Speaking aloud: on' : 'Speaking aloud: off'}
+          </button>
+        </div>
+      </header>
 
-      {/* Main 2-Way Oberon Layout */}
+      <section id="live-caption" className={`caption-stage ${justAdded ? 'is-committed' : ''}`} aria-live="polite">
+        <p className="caption-kicker">English</p>
+        <p id="english-line" className="english-line">
+          {englishPreview.english || 'Signs become an English sentence here.'}
+        </p>
+        {englishPreview.note && <p className="english-note">{englishPreview.note}</p>}
+        <p className="caption-kicker">Glosses</p>
+        <div className="caption-line">
+          {words.length === 0 && spelling.length === 0 ? (
+            <span className="caption-placeholder caption-placeholder-small">Recognized glosses stay here. Tap one to remove it.</span>
+          ) : (
+            words.map((word, index) => (
+              <button key={`${word}-${index}`} type="button" className="caption-word" onClick={() => assemblerRef.current?.removeAt(index)} aria-label={`Remove ${word}`}>
+                {word}
+              </button>
+            ))
+          )}
+        </div>
+        <div className="spell-row" aria-label="Fingerspelling">
+          {spelling.length === 0 ? (
+            <span className="spell-empty">Fingerspelled letters appear here.</span>
+          ) : (
+            spelling.map((letter, index) => (
+              <span key={`${letter}-${index}`} className="spell-tile">{letter}</span>
+            ))
+          )}
+        </div>
+        {justAdded && <p className="commit-flash" role="status">Added {justAdded}</p>}
+        <div className="status-row">
+          <span className={`status-chip ${handCount > 0 ? 'is-live' : ''}`}>{handStatus}</span>
+          <span className="status-chip">{phase === 'fingerspelling' ? 'Fingerspelling' : phase === 'signing' ? 'Signing' : 'Waiting'}</span>
+          <span className="status-chip">{forcedHand === 'AUTO' ? 'Either hand' : `${forcedHand} hand`}</span>
+          {personalHit && <span className="status-chip is-live">Your sign</span>}
+          <div className="meter" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(matchConfidence)} aria-label="Confidence">
+            <div style={{ width: `${Math.max(0, Math.min(100, matchConfidence))}%` }} />
+            <span>{matchConfidence > 0 ? `${matchConfidence.toFixed(0)}%` : '—'}</span>
+          </div>
+        </div>
+        <p className="now-reading">{predictedSign}</p>
+        <p className={frameHint.match(/frame|closer|light|back|Raise/) ? 'frame-hint warn' : 'frame-hint'}>{frameHint}</p>
+        {choices.length > 0 && (
+          <div className="choice-row" role="group" aria-label="Choose the word you signed">
+            {choices.map((choice) => (
+              <button
+                key={choice.label}
+                type="button"
+                className="choice-target"
+                onClick={() => {
+                  assemblerRef.current?.pushSign(choice.label, choice.probability);
+                  interpreterRef.current?.dismissChoices();
+                  setChoices([]);
+                  setPredictedSign(choice.label);
+                  setMatchConfidence(choice.probability * 100);
+                  setJustAdded(choice.label);
+                }}
+              >
+                {choice.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {topGuesses && <p className="top-guesses">Other guesses: {topGuesses}</p>}
+        <div className="phrase-panel">
+          <p id="phrase-note" className="caption-kicker">Quick phrases</p>
+          <p className="phrase-note">Tap a word to add English. Spell means it is not one of the 250 signs: hold still and fingerspell it, or tap to put the word on screen.</p>
+          <div className="phrase-row" role="group" aria-label="Quick phrases" aria-describedby="phrase-note">
+            {QUICK_PHRASES.map((phrase) => {
+              const spell = !phraseInRecognizer(phrase);
+              return (
+                <button
+                  key={phrase.id}
+                  id={`phrase-${phrase.id}`}
+                  type="button"
+                  className="phrase-target"
+                  aria-label={spell ? `${phrase.label}, not in the recognizer. Adds the English word. Fingerspell to sign it.` : `Add ${phrase.label}`}
+                  onClick={() => {
+                    assemblerRef.current?.pushSign(phrase.text, 1);
+                    setPredictedSign(phrase.label);
+                    setMatchConfidence(100);
+                    setJustAdded(phrase.label);
+                  }}
+                >
+                  {phrase.label}{spell ? ' · spell' : ''}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="caption-actions">
+          <button type="button" onClick={() => assemblerRef.current?.undo()} disabled={words.length + spelling.length === 0}>Undo</button>
+          <button type="button" onClick={() => assemblerRef.current?.clearBuffer()} disabled={words.length + spelling.length === 0}>Clear</button>
+          <button type="button" className="primary" onClick={() => assemblerRef.current?.commitLine()} disabled={words.length + spelling.length === 0}>Send line</button>
+          <button id="replay-held-out" type="button" onClick={replayHeldOut}>Replay a sample</button>
+        </div>
+      </section>
+
       <div className="layout">
-        {/* Left Viewport: Signer Camera Capture & Multimodal Tracking */}
-        <div className="video-box">
-          <span className="corner-cross">+</span>
+        <section className="video-box" aria-label="Camera">
           <div className="video-header">
-            <span>⚡ GOOGLE DEEPMIND SL2T HOLISTIC VIEWPORT</span>
+            <span>Camera</span>
             <div className="telemetry-badges">
               <span className="status-pill">{fps} FPS</span>
-              <span className="status-pill highlight">HEAD: {headGesture}</span>
-              <span className="status-pill highlight">SL2T PRIVACY: ON</span>
               <button
                 className="status-pill-btn"
-                onClick={() => setIsOneHandedMode(!isOneHandedMode)}
+                type="button"
+                title="AUTO follows the moving hand, including a left-handed signer. LEFT or RIGHT forces that hand."
+                onClick={() => setForcedHand(forcedHand === 'AUTO' ? 'LEFT' : forcedHand === 'LEFT' ? 'RIGHT' : 'AUTO')}
               >
-                {isOneHandedMode ? '📱 1-HAND: ON' : '🤲 2-HAND: DUAL'}
-              </button>
-              <button
-                className="status-pill-btn"
-                onClick={() => setSignerHandedness(signerHandedness === 'AUTO' ? 'LEFT' : signerHandedness === 'LEFT' ? 'RIGHT' : 'AUTO')}
-              >
-                HANDS: {signerHandedness}
+                Hand: {forcedHand}
               </button>
             </div>
           </div>
-
-          <div className="video-frame">
-            <video ref={videoRef} className="video" autoPlay playsInline muted />
-            <canvas ref={canvasRef} className="video" />
+          <div className="video-frame mirror-view">
+            <video ref={videoRef} className="video" autoPlay playsInline muted aria-hidden="true" />
+            <canvas ref={canvasRef} className="video" aria-hidden="true" />
           </div>
-
           <div className="video-footer">
             <div>{trackingStatus.message}</div>
-            <div className="grammar-badge">Active Grammar Engine: {activeGrammarRule}</div>
+            <div>{modelSummary}</div>
           </div>
-        </div>
+        </section>
 
-        {/* Right Viewport: Shared 2-Way Conversation Feed */}
-        <div className="side-stack">
-          <div className="chat-box">
-            <span className="corner-cross">+</span>
-            <div className="chat-header">
-              <div>💬 2-WAY SL2T CONVERSATION STREAM</div>
-              <button
-                className="tts-toggle-btn"
-                onClick={() => setSpeechEnabled(!speechEnabled)}
-              >
-                {speechEnabled ? '🔊 SPEECH ON' : '🔇 SPEECH OFF'}
-              </button>
-            </div>
-
-            <div className="chat-status">
-              <div>
-                <span>Predicted Sign</span>
-                <strong>{predictedSign}</strong>
-              </div>
-              <div>
-                <span>Match Confidence</span>
-                <strong>{matchConfidence > 0 ? `${matchConfidence.toFixed(1)}%` : '---'}</strong>
-              </div>
-            </div>
-
-            {/* Current Active Phrase Assembly */}
-            <div className="phrase-builder-box">
-              <div className="phrase-header">
-                <span>SL2T STREAMING PHRASE BUFFER:</span>
-                <div className="phrase-actions">
-                  <button
-                    className="btn-phrase-speak"
-                    onClick={() => speakPhrase(currentPhrase.join(' '))}
-                    disabled={currentPhrase.length === 0}
-                  >
-                    🔊 SPEAK
-                  </button>
-                  <button
-                    className="btn-phrase-clear"
-                    onClick={() => assemblerRef.current?.clearBuffer()}
-                    disabled={currentPhrase.length === 0}
-                  >
-                    CLEAR
-                  </button>
-                  <button
-                    className="btn-phrase-mock"
-                    onClick={() => runMockTest()}
-                  >
-                    TEST SL2T PHRASE
-                  </button>
-                </div>
-              </div>
-              <div className="phrase-display">
-                {currentPhrase.length === 0 ? (
-                  <span className="phrase-empty">Live coordinate landmark sequences buffer here into spoken text...</span>
-                ) : (
-                  currentPhrase.join(' ')
-                )}
-              </div>
-            </div>
-
-            {/* Scrollable Conversation Stream */}
-            <div className="chat-list" ref={chatScrollRef}>
-              {conversation.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`chat-item ${msg.sender === 'HEARING' ? 'chat-item-hearing' : ''}`}
-                >
-                  <div className="chat-msg-header">
-                    <span className="chat-msg-sender">
-                      {msg.sender === 'SIGNER' ? '🤟 DEAF SIGNER' : '🗣️ HEARING PERSON'}
-                    </span>
-                    <span className="chat-msg-time">{msg.timestamp}</span>
-                  </div>
-                  <div className="chat-msg-body">{msg.text}</div>
-                  {msg.grammarRuleApplied && (
-                    <div className="chat-msg-rule">📐 Rule: {msg.grammarRuleApplied}</div>
-                  )}
-                </div>
-              ))}
-              {interimHearingText && (
-                <div className="chat-item chat-item-hearing interim">
-                  <span className="chat-msg-sender">🗣️ HEARING PERSON (LISTENING...)</span>
-                  <div className="chat-msg-body">{interimHearingText}</div>
-                </div>
-              )}
-            </div>
-
-            {/* Layer 5 Reverse Channel: Hearing Person Reply Bar */}
-            <div className="reverse-channel-bar">
-              <button
-                className={`btn-mic-toggle ${isMicListening ? 'active' : ''}`}
-                onClick={handleToggleMic}
-              >
-                {isMicListening ? '🎙️ LISTENING...' : '🎤 SPEAK REPLY'}
-              </button>
-
-              <form onSubmit={handleSendTypedReply} className="typed-reply-form">
-                <input
-                  type="text"
-                  className="typed-reply-input"
-                  placeholder="Type reply for Deaf person to read..."
-                  value={typedReplyText}
-                  onChange={(e) => setTypedReplyText(e.target.value)}
-                />
-                <button type="submit" className="btn-send-reply">
-                  SEND
-                </button>
-              </form>
-            </div>
+        <section className="hearing-panel" aria-label="Hearing person">
+          <h2>Their words</h2>
+          <div className="hearing-hero" aria-live="polite">
+            {hearingNow || 'Type, or turn on speech-to-text. Their reply shows here.'}
           </div>
-        </div>
+          <div className="caption-actions">
+            <button
+              type="button"
+              className={isMicListening ? 'is-on' : ''}
+              aria-pressed={isMicListening}
+              aria-describedby="stt-note"
+              onClick={() => {
+                const result = hearingRef.current?.toggleMicrophone();
+                if (result === 'on') {
+                  setSttNote('Microphone audio goes to your browser’s speech service, not to SignBridge. The camera stays on this device.');
+                } else if (result === 'unsupported') {
+                  setSttNote('Speech to text is not available in this browser. Type instead. The camera stays on this device.');
+                } else {
+                  setSttNote('');
+                }
+              }}
+            >
+              {isMicListening ? 'Listening…' : 'Speech to text'}
+            </button>
+          </div>
+          <p id="stt-note" className="privacy-note">{sttNote || 'Speech to text is off. The camera is never uploaded.'}</p>
+          <form
+            className="typed-reply-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!typedReplyText.trim()) return;
+              hearingRef.current?.sendTypedReply(typedReplyText);
+              setTypedReplyText('');
+            }}
+          >
+            <label htmlFor="reply-input">Type to the signer</label>
+            <input
+              id="reply-input"
+              className="typed-reply-input"
+              placeholder="English reply"
+              value={typedReplyText}
+              onChange={(event) => setTypedReplyText(event.target.value)}
+            />
+            <button className="primary" type="submit">Show text</button>
+          </form>
+        </section>
       </div>
 
-      {/* Open-Domain ASL Sign Language Library Explorer */}
-      <section className="dict-box">
-        <span className="corner-cross">+</span>
-        <div className="dict-header">
-          <div>📚 OPEN-DOMAIN ASL KNOWLEDGE BASE & SIGN DICTIONARY</div>
-          <div className="dataset-actions-row">
-            <button className="btn-dataset-action" onClick={handleExportDataset}>
-              💾 EXPORT DATASET (.JSON)
-            </button>
-            <button className="btn-dataset-action" onClick={handleImportJSONClick}>
-              📂 IMPORT DATASET (.JSON)
-            </button>
-          </div>
-        </div>
-
-        <div className="dict-controls">
-          {/* Category Filters */}
-          <div className="category-filters">
-            {['ALL', 'Common Word', 'Alphabet', 'Number', 'Classroom', 'Verbs & Actions', 'Time & Calendar', 'Adjectives & Feelings', 'Classifiers', 'Emergency / Care'].map((cat) => (
-              <button
-                key={cat}
-                className={`filter-pill ${selectedCategory === cat ? 'active' : ''}`}
-                onClick={() => setSelectedCategory(cat)}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-
-          {/* Book Source Filters */}
-          <div className="category-filters" style={{ marginTop: '8px' }}>
-            <span style={{ fontSize: '11px', color: '#6b7280', alignSelf: 'center', marginRight: '6px' }}>BOOK SOURCE:</span>
-            {['ALL', 'ASL Classroom Book', 'Juicy English Starters', 'ASL The Easy Way', 'ACR GCD Storybook Standards'].map((book) => (
-              <button
-                key={book}
-                className={`filter-pill ${selectedBookSource === book ? 'active' : ''}`}
-                onClick={() => setSelectedBookSource(book)}
-              >
-                {book}
-              </button>
-            ))}
-          </div>
-
-          <input
-            type="text"
-            className="dict-search-input"
-            style={{ marginTop: '12px' }}
-            placeholder="Search 63+ open-domain ASL signs, handshapes, grammar rules, classifiers (cl-1, cl-3, cl-55)..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-
-        <div className="dict-grid">
-          {filteredDictionary.map((entry, idx) => (
-            <div key={idx} className="dict-card">
-              <div className="dict-card-head">
-                <span className="dict-card-title">{entry.label}</span>
-                <span className="dict-card-category">{entry.category}</span>
-              </div>
-              <p className="dict-card-desc">{entry.description}</p>
-              <div className="dict-card-hint">✋ {entry.handshapeHint}</div>
-              <div className="dict-card-book">📖 Source: {entry.bookSource}</div>
-              {entry.headGestureRule && entry.headGestureRule !== 'NONE' && (
-                <div className="dict-card-headrule">🗣️ Head Rule: {entry.headGestureRule}</div>
-              )}
-            </div>
+      <section className="chat-box" aria-label="Conversation">
+        <h2>Conversation</h2>
+        <div className="chat-list" ref={chatScrollRef}>
+          {conversation.map((msg) => (
+            <article key={msg.id} className={`chat-item ${msg.sender === 'HEARING' ? 'chat-item-hearing' : ''}`}>
+              <header className="chat-msg-header">
+                <span>{msg.sender === 'SIGNER' ? 'You signed' : 'They said'}</span>
+                <time>{msg.timestamp}</time>
+              </header>
+              <p>{msg.text}</p>
+              {msg.glosses && <p className="chat-glosses">Glosses: {msg.glosses}</p>}
+            </article>
           ))}
         </div>
       </section>
+
+      <section className="personal-box" aria-label="Your signs">
+        <h2>Your signs</h2>
+        <p>These stay in this browser. Video is not stored or uploaded. A close match can replace the shared guess for you.</p>
+        <form
+          className="personal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveLastSign();
+          }}
+        >
+          <label htmlFor="personal-label">Label</label>
+          <input
+            id="personal-label"
+            className="dict-search-input"
+            list="known-glosses"
+            placeholder="hello"
+            value={personalLabel}
+            onChange={(event) => setPersonalLabel(event.target.value)}
+          />
+          <button id="save-personal" className="primary" type="submit">Save last sign</button>
+          <button
+            id="clear-personal"
+            type="button"
+            onClick={() => {
+              personalRef.current = [];
+              setPersonalSamples([]);
+              persistPersonalSamples([]);
+              setPersonalMessage('Cleared the signs saved in this browser.');
+            }}
+            disabled={personalSamples.length === 0}
+          >
+            Clear
+          </button>
+        </form>
+        <datalist id="known-glosses">
+          {modelLabels.map((label) => (
+            <option key={label} value={label} />
+          ))}
+        </datalist>
+        <p id="personal-message">{personalMessage}</p>
+        <ul className="personal-list">
+          {personalSamples.map((sample) => (
+            <li key={sample.id}>
+              <span>{sample.label}</span>
+              <button type="button" onClick={() => removePersonal(sample.id)} aria-label={`Remove saved ${sample.label}`}>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <details className="dict-box">
+        <summary>Words this model knows ({modelLabels.length})</summary>
+        <div className="dict-controls">
+          <label className="sr-only" htmlFor="gloss-search">Search glosses</label>
+          <input id="gloss-search" className="dict-search-input" type="search" placeholder="Search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
+        </div>
+        <ul className="gloss-list">
+          {filtered.map((label) => (
+            <li key={label}>{label}</li>
+          ))}
+        </ul>
+      </details>
+      <p className="privacy-note">Camera video stays on this device and is not uploaded. Saved signs are landmark numbers in this browser only.</p>
+      </div>
     </div>
   );
 }
+
 
 export default App;

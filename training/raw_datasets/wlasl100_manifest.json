@@ -7,5 +7,6 @@
     "Trajectory",
     "Spatial Location"
   ],
-  "status": "READY_FOR_MODEL_TRAINING"
+  "status": "INDEX_ONLY_NOT_USED",
+  "note": "Not used to train the shipped model. See README."
 }

@@ -69,27 +69,27 @@ export class HearingChannel {
     };
   }
 
-  public toggleMicrophone(): boolean {
+  public toggleMicrophone(): 'on' | 'off' | 'unsupported' {
     if (!this.recognitionInstance) {
-      alert('Client-side Speech Recognition is not supported by your browser. Please type your reply below.');
-      return false;
+      this.onStatusCallback(false, 'Speech to text is not available in this browser. Type instead.');
+      return 'unsupported';
     }
 
     if (this.isListening) {
       this.isListening = false;
       this.recognitionInstance.stop();
       this.onStatusCallback(false);
-      return false;
+      return 'off';
     } else {
       try {
         this.isListening = true;
         this.recognitionInstance.start();
-        this.onStatusCallback(true, 'Listening for hearing person speech...');
-        return true;
+        this.onStatusCallback(true, '');
+        return 'on';
       } catch {
         this.isListening = false;
         this.onStatusCallback(false);
-        return false;
+        return 'off';
       }
     }
   }

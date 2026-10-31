@@ -2,20 +2,18 @@
   "name": "signbridge",
   "private": true,
   "version": "0.1.0",
-  "description": "Open-source sign language recognition starter app using free browser models.",
+  "description": "On-device American Sign Language gloss recognition. English text stays in the browser.",
   "scripts": {
     "predev": "node scripts/verify_signature.js",
     "prebuild": "node scripts/verify_signature.js",
     "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
+    "build": "tsc && vite build && node scripts/write-sw.mjs",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "test": "vitest run",
+    "test:e2e": "node tests/e2e/app.mjs"
   },
-
   "dependencies": {
-    "@mediapipe/camera_utils": "^0.3.1675465971",
-    "@mediapipe/drawing_utils": "^0.3.1675466124",
-    "@mediapipe/hands": "^0.4.1675469240",
-    "@tensorflow/tfjs": "^4.22.0",
+    "@mediapipe/tasks-vision": "^1.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -23,7 +21,10 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^6.0.5",
+    "axe-core": "^4.10.3",
+    "puppeteer-core": "^24.15.0",
     "typescript": "^5.5.4",
-    "vite": "^8.2.0"
+    "vite": "^8.2.0",
+    "vitest": "^3.2.7"
   }
 }

@@ -3,6 +3,7 @@
   "description": "Google DeepMind Sign Language to Text (SL2T) Landmark Sequence Benchmark",
   "kaggle_url": "https://www.kaggle.com/datasets/googleai/fleurs-asl",
   "mediapipe_url": "https://research.google/blog/mediapipe-holistic-simultaneous-face-hand-and-pose-prediction-on-device/",
-  "status": "READY_FOR_LOCAL_TRAINING",
-  "recommended_download_cmd": "python -c 'import kagglehub; path = kagglehub.dataset_download(\"googleai/fleurs-asl\"); print(path)'"
+  "status": "NOT_DOWNLOADED_NOT_USED",
+  "recommended_download_cmd": "python -c 'import kagglehub; path = kagglehub.dataset_download(\"googleai/fleurs-asl\"); print(path)'",
+  "note": "Not used to train the shipped model. See README."
 }
